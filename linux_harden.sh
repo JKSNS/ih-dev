@@ -721,15 +721,7 @@ function harden_web {
     print_banner "Web Hardening Initiated"
     harden_databases
     secure_php_ini
-    secure_ssh
     install_modsecurity
-    remove_profiles
-    fix_pam
-    search_ssn
-    remove_unused_packages
-    patch_vulnerabilities
-    check_permissions
-    sysctl_config
     # Additional user security measures (e.g., auditing hidden users) can be added here.
 }
 
@@ -752,6 +744,17 @@ function main {
 
     backups
     setup_splunk
+        
+	
+    # updates below: 
+    secure_ssh
+    remove_profiles
+    fix_pam
+    search_ssn
+    remove_unused_packages
+    patch_vulnerabilities
+    check_permissions
+    sysctl_config
 
     echo "[*] End of script"
     echo "[*] Script log can be viewed at $LOG"
