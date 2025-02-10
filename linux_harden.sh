@@ -975,7 +975,7 @@ function harden_web {
 ########################################################################
 # MENU FUNCTION
 # This function displays a menu of major parts of the script. The user may choose to run:
-#   1) The full hardening process
+#   1) The full hardening script
 #   2) User management (create users, change passwords, disable users, remove sudoers)
 #   3) Firewall configuration (choose UFW or custom iptables)
 #   4) Backups
