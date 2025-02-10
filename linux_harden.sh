@@ -986,7 +986,7 @@ function harden_web {
 #   9) Exit
 function show_menu {
     print_banner "Hardening Script Menu"
-    echo "1) Full Hardening Process (Run all)"
+    echo "1) Full Hardening Script"
     echo "2) User Management"
     echo "3) Firewall Configuration"
     echo "4) Backups"
