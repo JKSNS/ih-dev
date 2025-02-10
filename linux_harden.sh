@@ -338,9 +338,8 @@ function setup_ufw {
 
 ########################################################################
 # FUNCTION: setup_custom_iptables
-# This function writes the entire custom IPtables/awk script 
-# to a temporary file, executes it, and then prompts the user to add additional
-# manual port-based rules.
+# This function writes the entire custom IPtables/awk script to a temporary file,
+# executes it, and then (if desired) prompts the user to add additional manual rules.
 function setup_custom_iptables {
     print_banner "Configuring iptables (Custom Script)"
     tmpfile=$(mktemp /tmp/iptables_script.XXXXXX)
@@ -533,23 +532,33 @@ EOF
     sudo "$tmpfile"
     rm "$tmpfile"
     
-    # Prompt the user for additional manual rules based on port numbers.
     manual_choice=$(get_input_string "Would you like to add additional iptables rules (port numbers)? (y/n): ")
     if [[ "$manual_choice" == "y" || "$manual_choice" == "Y" ]]; then
         custom_iptables_manual_rules
     fi
 }
 
-# FUNCTION: custom_iptables_manual_rules
-# Prompts the user to input ports and then adds an iptables rule for each port.
+# FUNCTION: custom_iptables_manual_rules (inbound)
 function custom_iptables_manual_rules {
-    print_banner "Manual IPtables Rule Addition"
+    print_banner "Manual Inbound IPtables Rule Addition"
     echo "[*] Enter port numbers (one per line) for which you wish to allow inbound TCP traffic."
     echo "    Press ENTER on a blank line when finished."
     ports=$(get_input_list)
     for port in $ports; do
         sudo iptables -A INPUT --protocol tcp --dport "$port" -j ACCEPT
-        echo "[*] iptables rule added for port $port (TCP)"
+        echo "[*] Inbound iptables rule added for port $port (TCP)"
+    done
+}
+
+# FUNCTION: custom_iptables_manual_outbound_rules
+function custom_iptables_manual_outbound_rules {
+    print_banner "Manual Outbound IPtables Rule Addition"
+    echo "[*] Enter port numbers (one per line) for which you wish to allow outbound TCP traffic."
+    echo "    Press ENTER on a blank line when finished."
+    ports=$(get_input_list)
+    for port in $ports; do
+        sudo iptables -A OUTPUT --protocol tcp --dport "$port" -j ACCEPT
+        echo "[*] Outbound iptables rule added for port $port (TCP)"
     done
 }
 
@@ -890,21 +899,10 @@ function harden_web {
     # Additional user security measures (e.g., auditing hidden users) can be added here.
 }
 
-########################################################################
-# MENU FUNCTION
-# This function displays a menu of major parts of the script. The user may choose to run:
-#   1) The full hardening script
-#   2) User management (create users, change passwords, disable users, remove sudoers)
-#   3) Firewall configuration (choose UFW or custom iptables)
-#   4) Backups
-#   5) Splunk installation
-#   6) SSH hardening
-#   7) PAM/profile fixes and system configuration (fix PAM, remove profiles, check permissions, sysctl config)
-#   8) Web hardening
-#   9) Exit
+##################### MENU FUNCTION #####################
 function show_menu {
     print_banner "Hardening Script Menu"
-    echo "1) Full Hardening Script"
+    echo "1) Full Hardening Process (Run all)"
     echo "2) User Management"
     echo "3) Firewall Configuration"
     echo "4) Backups"
@@ -917,8 +915,7 @@ function show_menu {
     read -p "Enter your choice [1-9]: " menu_choice
     echo
     case $menu_choice in
-        1)
-            main ;;
+        1) main ;;
         2)
             detect_system_info
             install_prereqs
@@ -930,38 +927,34 @@ function show_menu {
             detect_system_info
             install_prereqs
             disable_other_firewalls
-            echo "[*] Choose a firewall configuration method:"
-            echo "    1) UFW"
-            echo "    2) iptables (Custom)"
-            read -p "Enter your choice [1-2]: " fw_choice
-            case $fw_choice in
+            echo "[*] Choose a firewall configuration option:"
+            echo "    1) Setup UFW"
+            echo "    2) Setup full IPtables (Custom Script)"
+            echo "    3) Create additional INBOUND IPtables rules"
+            echo "    4) Create additional OUTBOUND IPtables rules"
+            read -p "Enter your choice [1-4]: " fw_option
+            case $fw_option in
                 1) setup_ufw ;;
                 2) setup_custom_iptables ;;
-                *) echo "[X] Invalid choice. Defaulting to UFW."; setup_ufw ;;
+                3) custom_iptables_manual_rules ;;
+                4) custom_iptables_manual_outbound_rules ;;
+                *) echo "[X] Invalid choice. Exiting." ; exit 1 ;;
             esac ;;
-        4)
-            backups ;;
-        5)
-            setup_splunk ;;
-        6)
-            secure_ssh ;;
+        4) backups ;;
+        5) setup_splunk ;;
+        6) secure_ssh ;;
         7)
             fix_pam
             remove_profiles
             check_permissions
             sysctl_config ;;
-        8)
-            harden_web ;;
-        9)
-            echo "Exiting..."; exit 0 ;;
-        *)
-            echo "Invalid option. Exiting."
-            exit 1 ;;
+        8) harden_web ;;
+        9) echo "Exiting..."; exit 0 ;;
+        *) echo "Invalid option. Exiting." ; exit 1 ;;
     esac
 }
 
-########################################################################
-# MAIN FUNCTION: Runs the full hardening process
+##################### MAIN FUNCTION #####################
 function main {
     echo "CURRENT TIME: $(date +"%Y-%m-%d_%H:%M:%S")"
     echo "[*] Start of full hardening process"
@@ -972,14 +965,17 @@ function main {
     disable_users
     remove_sudoers
     disable_other_firewalls
-    # --- FIREWALL CONFIGURATION SECTION ---
-    echo "[*] Choose a firewall configuration method:"
-    echo "    1) UFW"
-    echo "    2) iptables (Custom)"
-    read -p "Enter your choice [1-2]: " fw_choice
+    echo "[*] Choose a firewall configuration option:"
+    echo "    1) Setup UFW"
+    echo "    2) Setup full IPtables (Custom Script)"
+    echo "    3) Create additional INBOUND IPtables rules"
+    echo "    4) Create additional OUTBOUND IPtables rules"
+    read -p "Enter your choice [1-4]: " fw_choice
     case $fw_choice in
         1) setup_ufw ;;
         2) setup_custom_iptables ;;
+        3) custom_iptables_manual_rules ;;
+        4) custom_iptables_manual_outbound_rules ;;
         *) echo "[X] Invalid choice. Defaulting to UFW."; setup_ufw ;;
     esac
     backups
@@ -995,15 +991,13 @@ function main {
     echo "[*] End of full hardening process"
     echo "[*] Script log can be viewed at $LOG"
     echo "[*] ***Please install system updates now***"
-    # After full hardening, optionally ask about web hardening.
     web_choice=$(get_input_string "Would you like to perform web hardening? (y/N): ")
     if [ "$web_choice" == "y" ]; then
         harden_web
     fi
 }
 
-########################################################################
-# PARSE ARGUMENTS (e.g., --debug)
+##################### ARGUMENT PARSING #####################
 for arg in "$@"; do
     case "$arg" in
         --debug )
@@ -1013,8 +1007,7 @@ for arg in "$@"; do
     esac
 done
 
-########################################################################
-# SET UP LOGGING DIRECTORY
+##################### LOGGING SETUP #####################
 LOG_PATH=$(dirname "$LOG")
 if [ ! -d "$LOG_PATH" ]; then
     sudo mkdir -p "$LOG_PATH"
@@ -1022,6 +1015,5 @@ if [ ! -d "$LOG_PATH" ]; then
     sudo chmod 750 "$LOG_PATH"
 fi
 
-########################################################################
-# MAIN EXECUTION: Instead of automatically running the full script, show the menu.
+##################### MAIN EXECUTION #####################
 show_menu
