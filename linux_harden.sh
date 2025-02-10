@@ -486,7 +486,253 @@ function setup_splunk {
     chmod +x splunk.sh
     ./splunk.sh -f $indexer_ip
 }
-#####################################################
+
+
+
+##################### ADDITIONAL WEB HARDENING FUNCTIONS #####################
+
+function harden_databases {
+    print_banner "Hardening Databases"
+    # Check if MySQL/MariaDB is active and if default (empty) root login works.
+    service mysql status >/dev/null 2>&1
+    if [ $? -eq 0 ]; then
+        echo "[+] mysql/mariadb is active!"
+        mysql -u root -e "quit" 2>/dev/null
+        if [ $? -eq 0 ]; then
+            echo "[!] Able to login with empty password on the mysql database!"
+            echo "[*] Backing up all databases..."
+            mysqldump --all-databases > backup.sql
+            ns=$(date +%N)
+            pass=$(echo "${ns}$REPLY" | sha256sum | cut -d" " -f1)
+            echo "[+] Backed up database. Key for database dump: $pass"
+            gpg -c --pinentry-mode=loopback --passphrase "$pass" backup.sql
+            rm backup.sql
+        fi
+    fi
+
+    # Check if PostgreSQL is active
+    service postgresql status >/dev/null 2>&1
+    if [ $? -eq 0 ]; then
+        echo "[+] PostgreSQL is active!"
+    fi
+}
+
+function secure_php_ini {
+    print_banner "Securing php.ini Files"
+    for ini in $(find / -name "php.ini" 2>/dev/null); do
+        echo "[+] Writing php.ini options to $ini..."
+        echo "disable_functions = shell_exec, exec, passthru, proc_open, popen, system, phpinfo" >> "$ini"
+        echo "max_execution_time = 3" >> "$ini"
+        echo "register_globals = off" >> "$ini"
+        echo "magic_quotes_gpc = on" >> "$ini"
+        echo "allow_url_fopen = off" >> "$ini"
+        echo "allow_url_include = off" >> "$ini"
+        echo "display_errors = off" >> "$ini"
+        echo "short_open_tag = off" >> "$ini"
+        echo "session.cookie_httponly = 1" >> "$ini"
+        echo "session.use_only_cookies = 1" >> "$ini"
+        echo "session.cookie_secure = 1" >> "$ini"
+    done
+}
+
+function secure_ssh {
+    print_banner "Securing SSH"
+    if service sshd status > /dev/null; then
+        # Enable root login and disable public-key authentication for root
+        sed -i '1s;^;PermitRootLogin yes\n;' /etc/ssh/sshd_config
+        sed -i '1s;^;PubkeyAuthentication no\n;' /etc/ssh/sshd_config
+
+        # For non-RedHat systems, disable PAM in sshd_config
+        if ! grep -qi "REDHAT_" /etc/os-release; then
+            sed -i '1s;^;UsePAM no\n;' /etc/ssh/sshd_config
+        fi
+
+        sed -i '1s;^;UseDNS no\n;' /etc/ssh/sshd_config
+        sed -i '1s;^;PermitEmptyPasswords no\n;' /etc/ssh/sshd_config
+        sed -i '1s;^;AddressFamily inet\n;' /etc/ssh/sshd_config
+        sed -i '1s;^;Banner none\n;' /etc/ssh/sshd_config
+
+        # Restart the SSH service if the configuration tests out
+        sshd -t && systemctl restart sshd
+    fi
+}
+
+function install_modsecurity {
+    print_banner "Installing ModSecurity"
+    local ipt
+    ipt=$(command -v iptables || command -v /sbin/iptables || command -v /usr/sbin/iptables)
+    $ipt -P OUTPUT ACCEPT
+
+    if command -v yum >/dev/null; then
+        # RHEL-based systems (not implemented in this snippet)
+        echo "RHEL-based ModSecurity installation not implemented"
+    elif command -v apt-get >/dev/null; then
+        # Debian/Ubuntu (and other Debian-based) systems
+        apt-get update
+        apt-get -y install libapache2-mod-security2
+        a2enmod security2
+        cp /etc/modsecurity/modsecurity.conf-recommended /etc/modsecurity/modsecurity.conf
+        sed -i 's/SecRuleEngine DetectionOnly/SecRuleEngine On/g' /etc/modsecurity/modsecurity.conf
+        systemctl restart apache2
+    elif command -v apk >/dev/null; then
+        # Alpine-based systems (not implemented in this snippet)
+        echo "Alpine-based ModSecurity installation not implemented"
+    else
+        echo "Unsupported distribution for ModSecurity installation"
+        exit 1
+    fi
+
+    $ipt -P OUTPUT DROP
+}
+
+function remove_profiles {
+    print_banner "Removing Profile Files"
+    mv /etc/prof{i,y}le.d 2>/dev/null
+    mv /etc/prof{i,y}le 2>/dev/null
+    for f in ".profile" ".bashrc" ".bash_login"; do
+        find /home /root -name "$f" -exec rm {} \;
+    done
+}
+
+function fix_pam {
+    print_banner "Fixing PAM Configuration"
+    local ipt
+    ipt=$(command -v iptables || command -v /sbin/iptables || command -v /usr/sbin/iptables)
+    $ipt -P OUTPUT ACCEPT
+
+    if command -v yum >/dev/null; then
+        if command -v authconfig >/dev/null; then
+            authconfig --updateall
+            yum -y reinstall pam
+        else
+            echo "No authconfig, cannot fix PAM on this system"
+        fi
+    elif command -v apt-get >/dev/null; then
+        DEBIAN_FRONTEND=noninteractive pam-auth-update --force
+        apt-get -y --reinstall install libpam-runtime libpam-modules
+    elif command -v apk >/dev/null; then
+        if [ -d /etc/pam.d ]; then
+            apk fix --purge linux-pam
+            for file in $(find /etc/pam.d -name "*.apk-new" 2>/dev/null); do
+                mv "$file" "$(echo $file | sed 's/.apk-new//g')"
+            done
+        else
+            echo "PAM is not installed"
+        fi
+    elif command -v pacman >/dev/null; then
+        if [ -z "$BACKUPDIR" ]; then
+            echo "No backup directory provided for PAM configs"
+        else
+            mv /etc/pam.d /etc/pam.d.backup
+            cp -R "$BACKUPDIR" /etc/pam.d
+        fi
+        pacman -S pam --noconfirm
+    else
+        echo "Unknown OS, not fixing PAM"
+    fi
+
+    $ipt -P OUTPUT DROP
+}
+
+function search_ssn {
+    print_banner "Searching for SSN Patterns"
+    local rootdir="/home/"
+    local ssn_pattern='[0-9]\{3\}-[0-9]\{2\}-[0-9]\{4\}'
+    find "$rootdir" -type f \( -name "*.txt" -o -name "*.csv" \) -exec sh -c '
+        file="$1"
+        pattern="$2"
+        grep -Hn "$pattern" "$file" | while read -r line; do
+            echo "$file:SSN:$line"
+        done
+    ' sh '{}' "$ssn_pattern" \;
+}
+
+function remove_unused_packages {
+    print_banner "Removing Unused Packages"
+    if command -v yum >/dev/null; then
+        yum purge -y -q netcat nc gcc cmake make telnet
+    elif command -v apt-get >/dev/null; then
+        apt-get -y purge netcat nc gcc cmake make telnet
+    elif command -v apk >/dev/null; then
+        apk remove gcc make
+    else
+        echo "Unsupported package manager for package removal"
+    fi
+}
+
+function patch_vulnerabilities {
+    print_banner "Patching Vulnerabilities"
+    # Patch pwnkit vulnerability
+    chmod 0755 /usr/bin/pkexec
+
+    # Patch CVE-2023-32233 vulnerability
+    sysctl -w kernel.unprivileged_userns_clone=0
+    echo "kernel.unprivileged_userns_clone = 0" >> /etc/sysctl.conf
+    sysctl -p
+}
+
+function check_permissions {
+    print_banner "Checking and Setting Permissions"
+    chown root:root /etc/shadow
+    chown root:root /etc/passwd
+    chmod 640 /etc/shadow
+    chmod 644 /etc/passwd
+
+    echo "[+] SUID binaries:"
+    find / -perm -4000 2>/dev/null
+
+    echo "[+] Directories with 777 permissions (max depth 3):"
+    find / -maxdepth 3 -type d -perm -777 2>/dev/null
+
+    echo "[+] Files with capabilities:"
+    getcap -r / 2>/dev/null
+
+    echo "[+] Files with extended ACLs in critical directories:"
+    getfacl -sR /etc/ /usr/ /root/
+}
+
+function sysctl_config {
+    print_banner "Applying sysctl Configurations"
+    local file="/etc/sysctl.conf"
+    echo "net.ipv4.tcp_syncookies = 1" >> "$file"
+    echo "net.ipv4.tcp_synack_retries = 2" >> "$file"
+    echo "net.ipv4.tcp_challenge_ack_limit = 1000000" >> "$file"
+    echo "net.ipv4.tcp_rfc1337 = 1" >> "$file"
+    echo "net.ipv4.icmp_ignore_bogus_error_responses = 1" >> "$file"
+    echo "net.ipv4.conf.all.accept_redirects = 0" >> "$file"
+    echo "net.ipv4.icmp_echo_ignore_all = 1" >> "$file"
+    echo "kernel.core_uses_pid = 1" >> "$file"
+    echo "kernel.kptr_restrict = 2" >> "$file"
+    echo "kernel.perf_event_paranoid = 2" >> "$file"
+    echo "kernel.randomize_va_space = 2" >> "$file"
+    echo "kernel.sysrq = 0" >> "$file"
+    echo "kernel.yama.ptrace_scope = 2" >> "$file"
+    echo "fs.protected_hardlinks = 1" >> "$file"
+    echo "fs.protected_symlinks = 1" >> "$file"
+    echo "fs.suid_dumpable = 0" >> "$file"
+    echo "kernel.unprivileged_userns_clone = 0" >> "$file"
+    echo "fs.protected_fifos = 2" >> "$file"
+    echo "fs.protected_regular = 2" >> "$file"
+    echo "kernel.kptr_restrict = 2" >> "$file"
+
+    sysctl -p >/dev/null
+}
+
+function harden_web {
+    print_banner "Web Hardening Initiated"
+    harden_databases
+    secure_php_ini
+    secure_ssh
+    install_modsecurity
+    remove_profiles
+    fix_pam
+    search_ssn
+    remove_unused_packages
+    patch_vulnerabilities
+    check_permissions
+    sysctl_config
+    # Additional user security measures (e.g., auditing hidden users) can be added here.
+}
 
 ######################## MAIN #######################
 function main {
@@ -533,4 +779,11 @@ fi
 
 # Run main function and log output
 main "$@" 2>&1 | sudo tee -a $LOG
+
+# After main, prompt the user whether to perform web hardening.
+web_choice=$(get_input_string "Would you like to harden web? (y/N): ")
+if [ "$web_choice" == "y" ]; then
+    harden_web
+fi
+
 #####################################################
