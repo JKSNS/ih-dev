@@ -129,7 +129,7 @@ function detect_system_info {
 function install_prereqs {
     print_banner "Installing prerequisites"
     # TODO: install a syslog daemon for Splunk?
-    # Needed for both hardening and Splunk installation
+    # Needed for both hardening and Splunk installlation
     sudo $pm install -y zip unzip wget curl acl
 }
 
@@ -338,7 +338,7 @@ function setup_ufw {
 
 ########################################################################
 # FUNCTION: setup_custom_iptables
-# This function writes the entire custom IPtables/awk script (explained above)
+# This function writes the entire custom IPtables/awk script 
 # to a temporary file, executes it, and then prompts the user to add additional
 # manual port-based rules.
 function setup_custom_iptables {
@@ -534,7 +534,7 @@ EOF
     rm "$tmpfile"
     
     # Prompt the user for additional manual rules based on port numbers.
-    manual_choice=$(get_input_string "Would you like to manually add additional iptables rules based on port number? (y/n): ")
+    manual_choice=$(get_input_string "Would you like to add additional iptables rules (port numbers)? (y/n): ")
     if [[ "$manual_choice" == "y" || "$manual_choice" == "Y" ]]; then
         custom_iptables_manual_rules
     fi
