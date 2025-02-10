@@ -490,7 +490,7 @@ function setup_splunk {
 
 ##################### ADDITIONAL WEB HARDENING FUNCTIONS #####################
 
-function harden_databases {
+function backup_databases {
     print_banner "Hardening Databases"
     # Check if MySQL/MariaDB is active and if default (empty) root login works.
     sudo service mysql status >/dev/null 2>&1
@@ -719,7 +719,7 @@ function sysctl_config {
 
 function harden_web {
     print_banner "Web Hardening Initiated"
-    harden_databases
+    backup_databases
     secure_php_ini
     install_modsecurity
     # Additional user security measures (e.g., auditing hidden users) can be added here.
