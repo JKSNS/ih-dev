@@ -344,10 +344,29 @@ function setup_ufw {
 function setup_custom_iptables {
     print_banner "Configuring iptables (Custom Script)"
     
+    echo "Select your DNS server option:"
+    echo "  1) Use Cloudflare DNS servers (1.1.1.1, 1.0.0.1)"
+    echo "  2) Use default gateway/router as your DNS server"
+    echo "  3) Use default DNS servers (192.168.XXX.1, 192.168.XXX.2)"
+    dns_choice=$(get_input_string "Enter your choice [1-3]: ")
+    if [[ "$dns_choice" == "1" ]]; then
+        dns_value="1.1.1.1 1.0.0.1"
+    elif [[ "$dns_choice" == "2" ]]; then
+        default_gateway=$(ip route | awk '/default/ {print $3; exit}')
+        if [[ -z "$default_gateway" ]]; then
+            echo "[X] Could not determine default gateway. Using fallback DNS servers."
+            dns_value="192.168.XXX.1 192.168.XXX.2"
+        else
+            dns_value="$default_gateway"
+        fi
+    else
+        dns_value="192.168.XXX.1 192.168.XXX.2"
+    fi
+
     # Create a temporary file for the script
     tmpfile=$(mktemp /tmp/iptables_script.XXXXXX)
     
-    # Write the dual-mode script into the temporary file
+    # Write the dual-mode script into the temporary file using a placeholder for DNS_SERVERS
     cat <<'EOF' > "$tmpfile"
 #!/bin/bash
 # Below is a valid bash script that is also a valid awk script (albeit one that does nothing)
@@ -367,7 +386,7 @@ sh -c "ss -napH4 | awk -f $BASH_SOURCE" {0..0}
 BEGIN {
   UNRESTRICTED_SUBNETS = "10.128.XXX.0/24";
   EXTERNAL_SUBNET = "10.120.XXX.0/24";  # UNUSED
-  DNS_SERVERS = "192.168.XXX.1 192.168.XXX.2";
+  DNS_SERVERS = "##DNS_SERVERS##";
   IPTABLES_CMD = "iptables";
   DEFAULT_INPUT_CHAIN = "INPUT";
   DEFAULT_OUTPUT_CHAIN = "OUTPUT";
@@ -541,6 +560,9 @@ $2 in OUTBOUND_CONNECTION_TYPES_ARRAY {
 }
 EOF
 
+    # Substitute the placeholder DNS_SERVERS value with the user's selection
+    sed -i "s/##DNS_SERVERS##/$dns_value/" "$tmpfile"
+    
     # Make the temporary script executable
     chmod +x "$tmpfile"
     
@@ -560,6 +582,7 @@ EOF
         extended_iptables
     fi
 }
+
 
 # FUNCTION: custom_iptables_manual_rules (inbound)
 function custom_iptables_manual_rules {
