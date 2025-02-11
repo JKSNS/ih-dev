@@ -642,62 +642,115 @@ function reset_iptables {
 
 function backups {
     print_banner "Backups"
-    echo "[*] Would you like to backup any files?"
+    echo "[*] Would you like to backup any files? (y/N): "
     option=$(get_input_string "(y/N): ")
-
     if [ "$option" != "y" ]; then
         return
     fi
-    
-    # Enter directories to backup
-    repeat=true
-    while $repeat; do
-        repeat=false
-        dirs_to_backup=()
-        echo "Enter directories/files to backup:"
-        input=$(get_input_list)
-        for item in $input; do
+
+    # Pre-check for critical web directories
+    default_web_dirs=(
+        "/etc/nginx" 
+        "/etc/apache2" 
+        "/usr/share/nginx" 
+        "/var/www" 
+        "/var/www/html" 
+        "/etc/lighttpd" 
+        "/etc/mysql" 
+        "/etc/postgresql" 
+        "/var/lib/apache2" 
+        "/var/lib/mysql" 
+        "/etc/redis" 
+        "/etc/phpMyAdmin" 
+        "/etc/php.d"
+    )
+    detected_web_dirs=()
+    echo "[*] Scanning for critical web directories..."
+    for dir in "${default_web_dirs[@]}"; do
+        if [ -d "$dir" ]; then
+            detected_web_dirs+=("$dir")
+        fi
+    done
+
+    dirs_to_backup=()
+    if [ ${#detected_web_dirs[@]} -gt 0 ]; then
+        echo "[*] The following critical web directories have been detected:"
+        for d in "${detected_web_dirs[@]}"; do
+            echo "    $d"
+        done
+        read -p "Would you like to include these directories in the backup? (y/n): " web_choice
+        if [[ "$web_choice" == "y" || "$web_choice" == "Y" ]]; then
+            dirs_to_backup=("${detected_web_dirs[@]}")
+        else
+            echo "[*] Skipping auto-detected web directories."
+        fi
+    else
+        echo "[*] No critical web directories were automatically detected."
+    fi
+
+    # Prompt for additional directories/files manually
+    read -p "Would you like to add additional directories/files to backup? (y/n): " add_choice
+    if [[ "$add_choice" == "y" || "$add_choice" == "Y" ]]; then
+        echo "[*] Enter additional directories/files to backup (one per line; hit ENTER on a blank line to finish):"
+        manual_dirs=$(get_input_list)
+        for item in $manual_dirs; do
             path=$(readlink -f "$item")
             if sudo [ -e "$path" ]; then
                 dirs_to_backup+=("$path")
             else
-                echo "[X] ERROR: $path is invalid or does not exist"
-                repeat=true
+                echo "[X] ERROR: $path is invalid or does not exist."
             fi
         done
-    done
+    fi
+
+    # If still no directories, prompt the user once more for manual entry.
+    if [ ${#dirs_to_backup[@]} -eq 0 ]; then
+        read -p "No directories selected. Would you like to manually enter directories/files to backup? (y/n): " manual_prompt
+        if [[ "$manual_prompt" == "y" || "$manual_prompt" == "Y" ]]; then
+            echo "[*] Enter directories/files to backup (one per line; hit ENTER on a blank line to finish):"
+            manual_dirs=$(get_input_list)
+            for item in $manual_dirs; do
+                path=$(readlink -f "$item")
+                if sudo [ -e "$path" ]; then
+                    dirs_to_backup+=("$path")
+                else
+                    echo "[X] ERROR: $path is invalid or does not exist."
+                fi
+            done
+        fi
+    fi
+
+    # If no directories are selected, exit backup.
+    if [ ${#dirs_to_backup[@]} -eq 0 ]; then
+        echo "[*] No directories/files selected for backup. Exiting backup function."
+        return
+    fi
 
     # Get backup storage name
     while true; do
-        backup_name=$(get_input_string "Enter name for encrypted backups file (ex. cosmo.zip ): ")
+        backup_name=$(get_input_string "Enter name for encrypted backups file (ex. cosmo.zip): ")
         if [ "$backup_name" != "" ]; then
             break
         fi
-        echo "[X] ERROR: Backup name cannot be blank"
+        echo "[X] ERROR: Backup name cannot be blank."
     done
+
     # Get backup storage location
     while true; do
-        backup_dir=$(get_input_string "Enter directory to place encrypted backups file (ex. /var/log/ ): ")
+        backup_dir=$(get_input_string "Enter directory to place encrypted backups file (ex. /var/log/): ")
         backup_dir=$(readlink -f "$backup_dir")
         if sudo [ -e "$backup_dir" ]; then
             break
         fi
-        echo "[X] ERROR: $backup_dir is invalid or does not exist"
+        echo "[X] ERROR: $backup_dir is invalid or does not exist."
     done
-    # Get backup encryption password
+
     echo "[*] Enter the backup encryption password."
     while true; do
-        password=""
-        confirm_password=""
-
-        # Ask for password
         password=$(get_silent_input_string "Enter password: ")
         echo
-
-        # Confirm password
         confirm_password=$(get_silent_input_string "Confirm password: ")
         echo
-
         if [ "$password" != "$confirm_password" ]; then
             echo "Passwords do not match. Please retry."
         else
@@ -705,20 +758,20 @@ function backups {
         fi
     done
 
-    # Zip all directories and store in backups directory
-    sudo mkdir "$backup_dir/backups"
+    # Create backup directory for individual zip files
+    sudo mkdir -p "$backup_dir/backups"
     for dir in "${dirs_to_backup[@]}"; do
         filename=$(basename "$dir")
         sudo zip -r "$backup_dir/backups/$filename.zip" "$dir" &> /dev/null
     done
 
-    # Compress backups directory
+    # Compress the backups directory into one archive
     tar -czvf "$backup_dir/backups.tar.gz" -C "$backup_dir" backups &>/dev/null
 
-    # Encrypt backup
+    # Encrypt the archive
     openssl enc -aes-256-cbc -salt -in "$backup_dir/backups.tar.gz" -out "$backup_dir/$backup_name" -k "$password"
-    
-    # Double check that backup exists before deleting intermediary files
+
+    # Verify backup creation and cleanup intermediary files
     if sudo [ -e "$backup_dir/$backup_name" ]; then
         sudo rm "$backup_dir/backups.tar.gz"
         sudo rm -rf "$backup_dir/backups"
