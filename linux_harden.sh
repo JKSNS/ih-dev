@@ -335,12 +335,13 @@ function setup_ufw {
         echo "[X] ERROR: Package ufw failed to install. Firewall will need to be configured manually"
     fi
 }
+
 ########################################################################
 # FUNCTION: setup_custom_iptables
 # This function writes the entire DSU dual-mode IPtables/awk script to a
 # temporary file, executes it (which flushes existing rules and builds the
-# base ruleset), and then cleans up. (It can then be extended to prompt the
-# user for additional rules or to open an extended IPtables management menu.)
+# base ruleset), and then cleans up. After that, it offers the option to
+# enter an extended iptables management menu.
 function setup_custom_iptables {
     print_banner "Configuring iptables (Custom Script)"
     
@@ -363,24 +364,21 @@ function setup_custom_iptables {
         dns_value="192.168.XXX.1 192.168.XXX.2"
     fi
 
-    # Create a temporary file for the script
+    # Create a temporary file for the DSU script
     tmpfile=$(mktemp /tmp/iptables_script.XXXXXX)
     
     # Write the dual-mode script into the temporary file using a placeholder for DNS_SERVERS
     cat <<'EOF' > "$tmpfile"
 #!/bin/bash
-# Below is a valid bash script that is also a valid awk script (albeit one that does nothing)
-# Its only purpose is to run this file as an awk script with the proper `ss` command piped in
-# on the off chance it isn't run properly
+# This is a dual-mode script: valid as both a Bash script and an AWK script.
+# Its purpose is to run as an AWK script fed by the output of "ss -napH4".
 
 #region bash
 sh -c "ss -napH4 | awk -f $BASH_SOURCE" {0..0}
 "exit" {0..0}
 #endregion bash
 
-# Tested `ss` options:
-# - napOH4
-# - napH4
+# Tested ss options: napOH4, napH4
 
 # Configuration
 BEGIN {
@@ -486,15 +484,22 @@ BEGIN {
   print(IPTABLES_CMD, "-A", DEFAULT_OUTPUT_CHAIN, "-m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT");
   printLog("INFO", "Accepting ICMP traffic from " DEFAULT_INPUT_CHAIN);
   print(IPTABLES_CMD, "-A", DEFAULT_INPUT_CHAIN, "-p icmp -j ACCEPT");
+  
+  # Static DNS rules: allow outbound UDP and TCP on port 53 for each DNS server.
   split(DNS_SERVERS, _DNS_SERVERS);
   for(server in _DNS_SERVERS) {
     printLog("INFO", "New outbound rule - " sprintf("%15s", _DNS_SERVERS[server]) ":" colored("yellow", sprintf("%5d", 53)) "/udp (" colored("blue", "DNS") ")");
-    print(IPTABLES_CMD, "-A", DEFAULT_OUTPUT_CHAIN, "-p udp -m udp --dport 53 -d", _DNS_SERVERS[server], "-j ACCEPT");
+    print(IPTABLES_CMD, "-A", DEFAULT_OUTPUT_CHAIN, "-p", "udp", "-m", "udp", "--dport", 53, "-d", _DNS_SERVERS[server], "-j", "ACCEPT");
   }
+  for(server in _DNS_SERVERS) {
+    printLog("INFO", "New outbound rule - " sprintf("%15s", _DNS_SERVERS[server]) ":" colored("yellow", sprintf("%5d", 53)) "/tcp (" colored("blue", "DNS") ")");
+    print(IPTABLES_CMD, "-A", DEFAULT_OUTPUT_CHAIN, "-p", "tcp", "-m", "tcp", "--dport", 53, "-d", _DNS_SERVERS[server], "-j", "ACCEPT");
+  }
+  
   split(UNRESTRICTED_SUBNETS, _UNRESTRICTED_SUBNETS);
   for(subnet in _UNRESTRICTED_SUBNETS) {
     printLog("INFO", "New inbound rule - " sprintf("%18s", _UNRESTRICTED_SUBNETS[subnet]) " (" colored("blue", "unrestricted subnet") ")");
-    print(IPTABLES_CMD, "-A", DEFAULT_INPUT_CHAIN, "-d", _UNRESTRICTED_SUBNETS[subnet], "-j ACCEPT");
+    print(IPTABLES_CMD, "-A", DEFAULT_INPUT_CHAIN, "-d", _UNRESTRICTED_SUBNETS[subnet], "-j", "ACCEPT");
   }
   delete INPUT_RULES[0];
   delete OUTPUT_RULES[0];
@@ -532,8 +537,10 @@ $2 in INBOUND_CONNECTION_TYPES_ARRAY {
     printLog("WARNING", "Inbound connection " formatPort(local[2], $1, name) " not in whitelist, skipping.");
     next;
   }
-  if(name) comment = "-m comment --comment \"" name "\"";
-  else comment = "";
+  if(name)
+    comment = "-m comment --comment \"" name "\"";
+  else
+    comment = "";
   print(IPTABLES_CMD " -A " DEFAULT_INPUT_CHAIN " -p " $1 " -m " $1 " --dport " local[2] " " comment " -j ACCEPT");
   printLog("INFO", "New inbound rule - " formatPort(local[2], $1, name));
   INPUT_RULES[local[2] "/" $1] = 1;
@@ -549,35 +556,33 @@ $2 in OUTBOUND_CONNECTION_TYPES_ARRAY {
     printLog("WARNING", "Outbound connection " formatPort(remote[2], $1, name) " not in whitelist, skipping.");
     next;
   }
-  if(remoteIP) remoteIPMatcher = "-d " remoteIP;
-  else remoteIPMatcher = "";
-  if(name) comment = "-m comment --comment \"" name "\"";
-  else comment = "";
+  if(remoteIP)
+    remoteIPMatcher = "-d " remoteIP;
+  else
+    remoteIPMatcher = "";
+  if(name)
+    comment = "-m comment --comment \"" name "\"";
+  else
+    comment = "";
   print(IPTABLES_CMD " -A " DEFAULT_OUTPUT_CHAIN " -p " $1 " -m " $1 " --dport " remote[2] " " remoteIPMatcher " -j ACCEPT");
   printLog("INFO", "New outbound rule - " sprintf("%15s", remoteIP) ":" formatPort(remote[2], $1, name));
-  if(remoteIP) OUTPUT_RULES[$6 "/" $1] = 1;
-  else OUTPUT_RULES[remote[2] "/" $1] = 1;
+  if(remoteIP)
+    OUTPUT_RULES[$6 "/" $1] = 1;
+  else
+    OUTPUT_RULES[remote[2] "/" $1] = 1;
 }
 EOF
 
-    # Substitute the placeholder DNS_SERVERS value with the user's selection
+    # Replace the placeholder with the chosen DNS value
     sed -i "s/##DNS_SERVERS##/$dns_value/" "$tmpfile"
     
-    # Make the temporary script executable
+    # Make the temporary script executable and run it with sudo
     chmod +x "$tmpfile"
-    
-    # Execute the script using sudo so iptables commands have proper privileges
     sudo "$tmpfile"
-    
-    # Remove the temporary file
     rm "$tmpfile"
     
-    manual_choice=$(get_input_string "Would you like to add additional iptables rules (port numbers)? (y/n): ")
-    if [[ "$manual_choice" == "y" || "$manual_choice" == "Y" ]]; then
-        custom_iptables_manual_rules
-    fi
-    
-    read -p "Would you like to open Extended IPtables Management? (y/n): " ext_choice
+    # Ask whether to enter additional (extended) iptables management
+    ext_choice=$(get_input_string "Would you like to add any additional iptables rules? (y/n): ")
     if [[ "$ext_choice" == "y" || "$ext_choice" == "Y" ]]; then
         extended_iptables
     fi
@@ -609,49 +614,64 @@ function custom_iptables_manual_outbound_rules {
 }
 
 # FUNCTION: extended_iptables
-# Provides an interactive menu for extended IPtables management:
-#   add outbound rule (ACCEPT)
-#   add inbound rule (ACCEPT)
-#   deny inbound rule (DROP)
-#   deny outbound rule (DROP)
-#   show all rules
+# Provides an interactive loop for extended IPtables management.
+# Options include:
+#   1) Add Outbound Rule (ACCEPT)
+#   2) Add Inbound Rule (ACCEPT)
+#   3) Deny Outbound Rule (DROP)
+#   4) Deny Inbound Rule (DROP)
+#   5) Show All Rules
+#   6) Reset Firewall
+#   7) Exit Extended IPtables Management
 function extended_iptables {
-    print_banner "Extended IPtables Management"
-    echo "Select an option:"
-    echo "  1) Add Outbound Rule (ACCEPT)"
-    echo "  2) Add Inbound Rule (ACCEPT)"
-    echo "  3) Deny Inbound Rule (DROP)"
-    echo "  4) Deny Outbound Rule (DROP)"
-    echo "  5) Show All Rules"
-    read -p "Enter your choice [1-5]: " choice
-    case $choice in
-        1)
-            read -p "Enter outbound port number: " port
-            sudo iptables -A OUTPUT --protocol tcp --dport "$port" -j ACCEPT
-            echo "Outbound ACCEPT rule added for port $port"
-            ;;
-        2)
-            read -p "Enter inbound port number: " port
-            sudo iptables -A INPUT --protocol tcp --dport "$port" -j ACCEPT
-            echo "Inbound ACCEPT rule added for port $port"
-            ;;
-        3)
-            read -p "Enter inbound port number to deny: " port
-            sudo iptables -A INPUT --protocol tcp --dport "$port" -j DROP
-            echo "Inbound DROP rule added for port $port"
-            ;;
-        4)
-            read -p "Enter outbound port number to deny: " port
-            sudo iptables -A OUTPUT --protocol tcp --dport "$port" -j DROP
-            echo "Outbound DROP rule added for port $port"
-            ;;
-        5)
-            sudo iptables -L -n -v
-            ;;
-        *)
-            echo "Invalid option selected."
-            ;;
-    esac
+    while true; do
+        print_banner "Extended IPtables Management"
+        echo "Select an option:"
+        echo "  1) Add Outbound Rule (ACCEPT)"
+        echo "  2) Add Inbound Rule (ACCEPT)"
+        echo "  3) Deny Outbound Rule (DROP)"
+        echo "  4) Deny Inbound Rule (DROP)"
+        echo "  5) Show All Rules"
+        echo "  6) Reset Firewall"
+        echo "  7) Exit Extended IPtables Management"
+        read -p "Enter your choice [1-7]: " choice
+        case $choice in
+            1)
+                read -p "Enter outbound port number: " port
+                sudo iptables -A OUTPUT --protocol tcp --dport "$port" -j ACCEPT
+                echo "Outbound ACCEPT rule added for port $port"
+                ;;
+            2)
+                read -p "Enter inbound port number: " port
+                sudo iptables -A INPUT --protocol tcp --dport "$port" -j ACCEPT
+                echo "Inbound ACCEPT rule added for port $port"
+                ;;
+            3)
+                read -p "Enter outbound port number to deny: " port
+                sudo iptables -A OUTPUT --protocol tcp --dport "$port" -j DROP
+                echo "Outbound DROP rule added for port $port"
+                ;;
+            4)
+                read -p "Enter inbound port number to deny: " port
+                sudo iptables -A INPUT --protocol tcp --dport "$port" -j DROP
+                echo "Inbound DROP rule added for port $port"
+                ;;
+            5)
+                sudo iptables -L -n -v
+                ;;
+            6)
+                reset_iptables
+                ;;
+            7)
+                echo "Exiting Extended IPtables Management."
+                break
+                ;;
+            *)
+                echo "Invalid option selected."
+                ;;
+        esac
+        echo ""
+    done
 }
 
 # FUNCTION: reset_iptables
