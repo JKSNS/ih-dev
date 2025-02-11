@@ -1103,41 +1103,47 @@ function harden_web {
     manage_web_immutablity
 }
 
-##################### NEW WEB HARDENING SUBMENU FUNCTIONS #####################
-function show_web_steps_menu {
-    print_banner "Select Individual Web Hardening Steps"
-    echo "1) Backup Databases"
-    echo "2) Secure php.ini Files"
-    echo "3) Install ModSecurity"
-    echo "4) Run MySQL Secure Installation"
-    echo "5) Manage Web Directory Immutability"
-    echo "6) Exit"
-    read -p "Enter your choice [1-6]: " web_step_choice
-    case $web_step_choice in
-        1) backup_databases ;;
-        2) secure_php_ini ;;
-        3) install_modsecurity ;;
-        4) my_secure_sql_installation ;;
-        5) manage_web_immutablity ;;
-        6) echo "[*] Exiting individual web hardening steps menu." ;;
-        *) echo "[X] Invalid option." ;;
-    esac
-}
-
+##################### NEW WEB HARDENING MENU FUNCTION #####################
 function show_web_hardening_menu {
     print_banner "Web Hardening Menu"
-    echo "1) Run Full Web Hardening"
-    echo "2) Run Individual Web Hardening Steps"
-    echo "3) Exit Web Hardening Menu"
-    read -p "Enter your choice [1-3]: " web_menu_choice
+    echo "1) Run Full Web Hardening Process"
+    echo "2) Run Individual Step: backup_databases"
+    echo "3) Run Individual Step: secure_php_ini"
+    echo "4) Run Individual Step: install_modsecurity"
+    echo "5) Run Individual Step: my_secure_sql_installation"
+    echo "6) Run Individual Step: manage_web_immutablity"
+    echo "7) Exit Web Hardening Menu"
+    read -p "Enter your choice [1-7]: " web_menu_choice
     case $web_menu_choice in
         1)
-            harden_web
+            print_banner "Web Hardening Initiated"
+            backup_databases
+            secure_php_ini
+            install_modsecurity
+            my_secure_sql_installation
+            manage_web_immutablity
             ;;
         2)
-            show_web_steps_menu
+            print_banner "Web Hardening Initiated"
+            backup_databases
             ;;
         3)
+            print_banner "Web Hardening Initiated"
+            secure_php_ini
+            ;;
+        4)
+            print_banner "Web Hardening Initiated"
+            install_modsecurity
+            ;;
+        5)
+            print_banner "Web Hardening Initiated"
+            my_secure_sql_installation
+            ;;
+        6)
+            print_banner "Web Hardening Initiated"
+            manage_web_immutablity
+            ;;
+        7)
             echo "[*] Exiting Web Hardening Menu"
             ;;
         *)
