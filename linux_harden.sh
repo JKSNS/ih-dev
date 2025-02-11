@@ -1032,6 +1032,67 @@ function my_secure_sql_installation {
     fi
 }
 
+# FUNCTION: manage_web_immutability
+# This function scans for default critical web directories (e.g., /etc/nginx, /etc/apache2, /var/www, etc.),
+# lists any that are found, and then prompts the user to either set the immutable flag (chattr +i) on these directories,
+# or to remove the immutable flag (chattr -i). This applies only to production web directories.
+function manage_web_immutability {
+    print_banner "Manage Web Directory Immutability"
+    
+    # List of common critical web directories (you may add or remove as needed)
+    default_web_dirs=(
+        "/etc/nginx"
+        "/etc/apache2"
+        "/usr/share/nginx"
+        "/var/www"
+        "/var/www/html"
+        "/etc/lighttpd"
+        "/etc/mysql"
+        "/etc/postgresql"
+        "/var/lib/apache2"
+        "/var/lib/mysql"
+        "/etc/redis"
+        "/etc/phpMyAdmin"
+        "/etc/php.d"
+    )
+    
+    detected_web_dirs=()
+    echo "[*] Scanning for critical web directories..."
+    for dir in "${default_web_dirs[@]}"; do
+        if [ -d "$dir" ]; then
+            detected_web_dirs+=("$dir")
+        fi
+    done
+
+    if [ ${#detected_web_dirs[@]} -eq 0 ]; then
+        echo "[*] No critical web directories were found."
+        return
+    fi
+
+    echo "[*] The following web directories have been detected:"
+    for d in "${detected_web_dirs[@]}"; do
+        echo "    $d"
+    done
+
+    read -p "Would you like to set these directories to immutable? (y/n): " imm_choice
+    if [[ "$imm_choice" == "y" || "$imm_choice" == "Y" ]]; then
+        for d in "${detected_web_dirs[@]}"; do
+            sudo chattr +i "$d"
+            echo "[*] Set immutable flag on $d"
+        done
+    else
+        read -p "Would you like to remove the immutable flag from these directories? (y/n): " unimm_choice
+        if [[ "$unimm_choice" == "y" || "$unimm_choice" == "Y" ]]; then
+            for d in "${detected_web_dirs[@]}"; do
+                sudo chattr -i "$d"
+                echo "[*] Removed immutable flag from $d"
+            done
+        else
+            echo "[*] No changes made to web directory immutability."
+        fi
+    fi
+}
+
 # harden_web function:
 function harden_web {
     print_banner "Web Hardening Initiated"
@@ -1039,6 +1100,50 @@ function harden_web {
     secure_php_ini
     install_modsecurity
     my_secure_sql_installation
+    manage_web_immutablity
+}
+
+##################### NEW WEB HARDENING SUBMENU FUNCTIONS #####################
+function show_web_steps_menu {
+    print_banner "Select Individual Web Hardening Steps"
+    echo "1) Backup Databases"
+    echo "2) Secure php.ini Files"
+    echo "3) Install ModSecurity"
+    echo "4) Run MySQL Secure Installation"
+    echo "5) Manage Web Directory Immutability"
+    echo "6) Exit"
+    read -p "Enter your choice [1-6]: " web_step_choice
+    case $web_step_choice in
+        1) backup_databases ;;
+        2) secure_php_ini ;;
+        3) install_modsecurity ;;
+        4) my_secure_sql_installation ;;
+        5) manage_web_immutablity ;;
+        6) echo "[*] Exiting individual web hardening steps menu." ;;
+        *) echo "[X] Invalid option." ;;
+    esac
+}
+
+function show_web_hardening_menu {
+    print_banner "Web Hardening Menu"
+    echo "1) Run Full Web Hardening"
+    echo "2) Run Individual Web Hardening Steps"
+    echo "3) Exit Web Hardening Menu"
+    read -p "Enter your choice [1-3]: " web_menu_choice
+    case $web_menu_choice in
+        1)
+            harden_web
+            ;;
+        2)
+            show_web_steps_menu
+            ;;
+        3)
+            echo "[*] Exiting Web Hardening Menu"
+            ;;
+        *)
+            echo "[X] Invalid option."
+            ;;
+    esac
 }
 
 ##################### MENU FUNCTION #####################
@@ -1106,7 +1211,7 @@ function show_menu {
             remove_profiles
             check_permissions
             sysctl_config ;;
-        8) harden_web ;;
+        8) show_web_hardening_menu ;;
         9) echo "Exiting..."; exit 0 ;;
         *) echo "Invalid option. Exiting." ; exit 1 ;;
     esac
@@ -1179,7 +1284,7 @@ function main {
     sysctl_config
     web_choice=$(get_input_string "Would you like to perform web hardening? (y/N): ")
     if [ "$web_choice" == "y" ]; then
-        harden_web
+        show_web_hardening_menu
     fi
     echo "[*] End of full hardening process"
     echo "[*] Script log can be viewed at $LOG"
