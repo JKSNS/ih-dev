@@ -335,23 +335,31 @@ function setup_ufw {
         echo "[X] ERROR: Package ufw failed to install. Firewall will need to be configured manually"
     fi
 }
-
 ########################################################################
 # FUNCTION: setup_custom_iptables
-# This function writes the entire custom IPtables/awk script to a temporary file,
-# executes it, and then (if desired) prompts the user to add additional manual rules.
+# This function writes the entire DSU dual-mode IPtables/awk script to a temporary file,
+# executes it (which flushes existing rules and builds the base ruleset), and then
+# prompts the user to add additional manual rules (if desired). Finally, it offers
+# to open the extended IPtables management menu.
 function setup_custom_iptables {
     print_banner "Configuring iptables (Custom Script)"
     tmpfile=$(mktemp /tmp/iptables_script.XXXXXX)
     cat <<'EOF' > "$tmpfile"
 #!/bin/bash
-# Below is a dual-mode script that is both valid Bash and AWK.
+# Below is a valid bash script that is also a valid awk script (albeit one that does nothing)
+# Its only purpose is to run this file as an awk script with the proper `ss` command piped in
+# on the off chance it isn't run properly
+
 #region bash
 sh -c "ss -napH4 | awk -f $BASH_SOURCE" {0..0}
 "exit" {0..0}
 #endregion bash
 
-# This AWK section sets configuration parameters and builds an iptables ruleset.
+# Tested `ss` options:
+# - napOH4
+# - napH4
+
+# Configuration
 BEGIN {
   UNRESTRICTED_SUBNETS = "10.128.XXX.0/24";
   EXTERNAL_SUBNET = "10.120.XXX.0/24";  # UNUSED
@@ -446,11 +454,11 @@ BEGIN {
   printLog("INFO", "Flushing " DEFAULT_OUTPUT_CHAIN);
   print(IPTABLES_CMD, "-F", DEFAULT_OUTPUT_CHAIN);
   printLog("INFO", "Accepting loopback traffic on " DEFAULT_INPUT_CHAIN);
-  print(IPTABLES_CMD, "-A", DEFAULT_INPUT_CHAIN,  "-i lo -j ACCEPT");
+  print(IPTABLES_CMD, "-A", DEFAULT_INPUT_CHAIN, "-i lo -j ACCEPT");
   printLog("INFO", "Accepting loopback traffic on " DEFAULT_OUTPUT_CHAIN);
   print(IPTABLES_CMD, "-A", DEFAULT_OUTPUT_CHAIN, "-o lo -j ACCEPT");
   printLog("INFO", "Enabling connection tracking on " DEFAULT_INPUT_CHAIN);
-  print(IPTABLES_CMD, "-A", DEFAULT_INPUT_CHAIN,  "-m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT");
+  print(IPTABLES_CMD, "-A", DEFAULT_INPUT_CHAIN, "-m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT");
   printLog("INFO", "Enabling connection tracking on " DEFAULT_OUTPUT_CHAIN);
   print(IPTABLES_CMD, "-A", DEFAULT_OUTPUT_CHAIN, "-m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT");
   printLog("INFO", "Accepting ICMP traffic from " DEFAULT_INPUT_CHAIN);
@@ -471,26 +479,26 @@ BEGIN {
 
 function extractIP(string) {
   if(match(string, /[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+/)) {
-    return substr(string,RSTART,RLENGTH);
+    return substr(string, RSTART, RLENGTH);
   }
   return "";
 }
 
 {
   if(match($7, "\"[^\"]+\""))
-    name = substr($7,RSTART + 1,RLENGTH - 2);
+    name = substr($7, RSTART+1, RLENGTH-2);
   else
     name = "";
   split($6, remote, ":");
-  remoteIP   = extractIP(remote[1]);
+  remoteIP = extractIP(remote[1]);
   if(remoteIP == "")
     printLog("WARNING", "Invalid remote IP for " colored("yellow", $6) " (" colored("blue", name) ")");
   if(remote[2] != "*" && (remote[2] < 1 || remote[2] > 65535))
     printLog("WARNING", "Invalid remote port for " colored("yellow", $6) " (" colored("blue", name) ")");
   split($5, local, ":");
-  localIP   = extractIP(local[1]);
+  localIP = extractIP(local[1]);
   if(localIP == "")
-    printLog("WARNING", "Invalid local IP for "   colored("yellow", $5) " (" colored("blue", name) ")");
+    printLog("WARNING", "Invalid local IP for " colored("yellow", $5) " (" colored("blue", name) ")");
   if(local[2] != "*" && (local[2] < 1 || local[2] > 65535))
     printLog("WARNING", "Invalid local port for " colored("yellow", $5) " (" colored("blue", name) ")");
 }
@@ -502,7 +510,7 @@ $2 in INBOUND_CONNECTION_TYPES_ARRAY {
     next;
   }
   if(name) comment = "-m comment --comment \"" name "\"";
-  else     comment = "";
+  else comment = "";
   print(IPTABLES_CMD " -A " DEFAULT_INPUT_CHAIN " -p " $1 " -m " $1 " --dport " local[2] " " comment " -j ACCEPT");
   printLog("INFO", "New inbound rule - " formatPort(local[2], $1, name));
   INPUT_RULES[local[2] "/" $1] = 1;
@@ -519,13 +527,13 @@ $2 in OUTBOUND_CONNECTION_TYPES_ARRAY {
     next;
   }
   if(remoteIP) remoteIPMatcher = "-d " remoteIP;
-  else         remoteIPMatcher = "";
+  else remoteIPMatcher = "";
   if(name) comment = "-m comment --comment \"" name "\"";
-  else     comment = "";
-  print(IPTABLES_CMD " -A " DEFAULT_OUTPUT_CHAIN " -p " $1 "-m " $1 " --dport " remote[2] " " remoteIPMatcher " -j ACCEPT");
+  else comment = "";
+  print(IPTABLES_CMD " -A " DEFAULT_OUTPUT_CHAIN " -p " $1 " -m " $1 " --dport " remote[2] " " remoteIPMatcher " -j ACCEPT");
   printLog("INFO", "New outbound rule - " sprintf("%15s", remoteIP) ":" formatPort(remote[2], $1, name));
   if(remoteIP) OUTPUT_RULES[$6 "/" $1] = 1;
-  else         OUTPUT_RULES[remote[2] "/" $1] = 1;
+  else OUTPUT_RULES[remote[2] "/" $1] = 1;
 }
 EOF
     chmod +x "$tmpfile"
@@ -535,6 +543,11 @@ EOF
     manual_choice=$(get_input_string "Would you like to add additional iptables rules (port numbers)? (y/n): ")
     if [[ "$manual_choice" == "y" || "$manual_choice" == "Y" ]]; then
         custom_iptables_manual_rules
+    fi
+
+    read -p "Would you like to open Extended IPtables Management? (y/n): " ext_choice
+    if [[ "$ext_choice" == "y" || "$ext_choice" == "Y" ]]; then
+        extended_iptables
     fi
 }
 
@@ -560,6 +573,69 @@ function custom_iptables_manual_outbound_rules {
         sudo iptables -A OUTPUT --protocol tcp --dport "$port" -j ACCEPT
         echo "[*] Outbound iptables rule added for port $port (TCP)"
     done
+}
+
+# FUNCTION: extended_iptables
+# Provides an interactive menu for extended IPtables management:
+#   add outbound rule (ACCEPT)
+#   add inbound rule (ACCEPT)
+#   deny inbound rule (DROP)
+#   deny outbound rule (DROP)
+#   show all rules
+function extended_iptables {
+    print_banner "Extended IPtables Management"
+    echo "Select an option:"
+    echo "  1) Add Outbound Rule (ACCEPT)"
+    echo "  2) Add Inbound Rule (ACCEPT)"
+    echo "  3) Deny Inbound Rule (DROP)"
+    echo "  4) Deny Outbound Rule (DROP)"
+    echo "  5) Show All Rules"
+    read -p "Enter your choice [1-5]: " choice
+    case $choice in
+        1)
+            read -p "Enter outbound port number: " port
+            sudo iptables -A OUTPUT --protocol tcp --dport "$port" -j ACCEPT
+            echo "Outbound ACCEPT rule added for port $port"
+            ;;
+        2)
+            read -p "Enter inbound port number: " port
+            sudo iptables -A INPUT --protocol tcp --dport "$port" -j ACCEPT
+            echo "Inbound ACCEPT rule added for port $port"
+            ;;
+        3)
+            read -p "Enter inbound port number to deny: " port
+            sudo iptables -A INPUT --protocol tcp --dport "$port" -j DROP
+            echo "Inbound DROP rule added for port $port"
+            ;;
+        4)
+            read -p "Enter outbound port number to deny: " port
+            sudo iptables -A OUTPUT --protocol tcp --dport "$port" -j DROP
+            echo "Outbound DROP rule added for port $port"
+            ;;
+        5)
+            sudo iptables -L -n -v
+            ;;
+        *)
+            echo "Invalid option selected."
+            ;;
+    esac
+}
+
+# FUNCTION: reset_iptables
+# This function resets the IPtables firewall by flushing all rules,
+# deleting all user-defined chains, zeroing packet and byte counters,
+# and setting the default policies for the INPUT, FORWARD, and OUTPUT chains to ACCEPT.
+function reset_iptables {
+    print_banner "Resetting IPtables Firewall"
+    echo "[*] Flushing all iptables rules..."
+    sudo iptables -F
+    sudo iptables -X
+    sudo iptables -Z
+    echo "[*] Setting default policies to ACCEPT..."
+    sudo iptables -P INPUT ACCEPT
+    sudo iptables -P FORWARD ACCEPT
+    sudo iptables -P OUTPUT ACCEPT
+    echo "[*] IPtables firewall has been reset."
 }
 
 ########################################################################
