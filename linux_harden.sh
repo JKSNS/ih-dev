@@ -337,13 +337,17 @@ function setup_ufw {
 }
 ########################################################################
 # FUNCTION: setup_custom_iptables
-# This function writes the entire DSU dual-mode IPtables/awk script to a temporary file,
-# executes it (which flushes existing rules and builds the base ruleset), and then
-# prompts the user to add additional manual rules (if desired). Finally, it offers
-# to open the extended IPtables management menu.
+# This function writes the entire DSU dual-mode IPtables/awk script to a
+# temporary file, executes it (which flushes existing rules and builds the
+# base ruleset), and then cleans up. (It can then be extended to prompt the
+# user for additional rules or to open an extended IPtables management menu.)
 function setup_custom_iptables {
     print_banner "Configuring iptables (Custom Script)"
+    
+    # Create a temporary file for the script
     tmpfile=$(mktemp /tmp/iptables_script.XXXXXX)
+    
+    # Write the dual-mode script into the temporary file
     cat <<'EOF' > "$tmpfile"
 #!/bin/bash
 # Below is a valid bash script that is also a valid awk script (albeit one that does nothing)
@@ -536,9 +540,15 @@ $2 in OUTBOUND_CONNECTION_TYPES_ARRAY {
   else OUTPUT_RULES[remote[2] "/" $1] = 1;
 }
 EOF
+    # Make the temporary script executable
     chmod +x "$tmpfile"
+    
+    # Execute the script using sudo so iptables commands have proper privileges
     sudo "$tmpfile"
+    
+    # Remove the temporary file
     rm "$tmpfile"
+}
     
     manual_choice=$(get_input_string "Would you like to add additional iptables rules (port numbers)? (y/n): ")
     if [[ "$manual_choice" == "y" || "$manual_choice" == "Y" ]]; then
