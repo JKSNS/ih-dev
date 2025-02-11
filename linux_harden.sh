@@ -1100,7 +1100,7 @@ function harden_web {
     secure_php_ini
     install_modsecurity
     my_secure_sql_installation
-    manage_web_immutablity
+    manage_web_immutability
 }
 
 ##################### NEW WEB HARDENING MENU FUNCTION #####################
@@ -1111,7 +1111,7 @@ function show_web_hardening_menu {
     echo "3) Run Individual Step: secure_php_ini"
     echo "4) Run Individual Step: install_modsecurity"
     echo "5) Run Individual Step: my_secure_sql_installation"
-    echo "6) Run Individual Step: manage_web_immutablity"
+    echo "6) Run Individual Step: manage_web_immutability"
     echo "7) Exit Web Hardening Menu"
     read -p "Enter your choice [1-7]: " web_menu_choice
     case $web_menu_choice in
@@ -1121,7 +1121,7 @@ function show_web_hardening_menu {
             secure_php_ini
             install_modsecurity
             my_secure_sql_installation
-            manage_web_immutablity
+            manage_web_immutability
             ;;
         2)
             print_banner "Web Hardening Initiated"
@@ -1141,7 +1141,7 @@ function show_web_hardening_menu {
             ;;
         6)
             print_banner "Web Hardening Initiated"
-            manage_web_immutablity
+            manage_web_immutability
             ;;
         7)
             echo "[*] Exiting Web Hardening Menu"
