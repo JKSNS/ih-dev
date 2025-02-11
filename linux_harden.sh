@@ -1019,14 +1019,30 @@ function show_menu {
             echo "[*] Choose a firewall configuration option:"
             echo "    1) Setup UFW"
             echo "    2) Setup full IPtables (Custom Script)"
-            echo "    3) Create additional INBOUND IPtables rules"
-            echo "    4) Create additional OUTBOUND IPtables rules"
-            read -p "Enter your choice [1-4]: " fw_option
+            echo "    3) Create additional INBOUND Allow IPtables rules"
+            echo "    4) Create additional OUTBOUND Allow IPtables rules"
+            echo "    5) Create additional INBOUND Deny IPtables rules"
+            echo "    6) Create additional OUTBOUND Deny IPtables rules"
+            echo "    7) Reset IPtables firewall"
+            echo "    8) Show all IPtables rules"
+            read -p "Enter your choice [1-8]: " fw_option
             case $fw_option in
                 1) setup_ufw ;;
                 2) setup_custom_iptables ;;
                 3) custom_iptables_manual_rules ;;
                 4) custom_iptables_manual_outbound_rules ;;
+                5)
+                    read -p "Enter inbound port number to DENY: " port
+                    sudo iptables -A INPUT --protocol tcp --dport "$port" -j DROP
+                    echo "Inbound DROP rule added for port $port"
+                    ;;
+                6)
+                    read -p "Enter outbound port number to DENY: " port
+                    sudo iptables -A OUTPUT --protocol tcp --dport "$port" -j DROP
+                    echo "Outbound DROP rule added for port $port"
+                    ;;
+                7) reset_iptables ;;
+                8) sudo iptables -L -n -v ;;
                 *) echo "[X] Invalid choice. Exiting." ; exit 1 ;;
             esac ;;
         4) backups ;;
@@ -1057,15 +1073,46 @@ function main {
     echo "[*] Choose a firewall configuration option:"
     echo "    1) Setup UFW"
     echo "    2) Setup full IPtables (Custom Script)"
-    echo "    3) Create additional INBOUND IPtables rules"
-    echo "    4) Create additional OUTBOUND IPtables rules"
-    read -p "Enter your choice [1-4]: " fw_choice
+    echo "    3) Show all IPtables rules"
+    echo "    4) Create additional INBOUND Allow IPtables rules"
+    echo "    5) Create additional OUTBOUND Allow IPtables rules"
+    echo "    6) Create additional INBOUND Deny IPtables rules"
+    echo "    7) Create additional OUTBOUND Deny IPtables rules"
+    echo "    8) Reset IPtables firewall (flush all rules, delete chains, reset counters)"
+    read -p "Enter your choice [1-8]: " fw_choice
     case $fw_choice in
-        1) setup_ufw ;;
-        2) setup_custom_iptables ;;
-        3) custom_iptables_manual_rules ;;
-        4) custom_iptables_manual_outbound_rules ;;
-        *) echo "[X] Invalid choice. Defaulting to UFW."; setup_ufw ;;
+        1)
+            setup_ufw
+            ;;
+        2)
+            setup_custom_iptables
+            ;;
+        3)
+            sudo iptables -L -n -v
+            ;;
+        4)
+            custom_iptables_manual_rules
+            ;;
+        5)
+            custom_iptables_manual_outbound_rules
+            ;;
+        6)
+            read -p "Enter inbound port number to DENY: " port
+            sudo iptables -A INPUT --protocol tcp --dport "$port" -j DROP
+            echo "Inbound DROP rule added for port $port"
+            ;;
+        7)
+            read -p "Enter outbound port number to DENY: " port
+            sudo iptables -A OUTPUT --protocol tcp --dport "$port" -j DROP
+            echo "Outbound DROP rule added for port $port"
+            ;;
+        8)
+            reset_iptables
+            ;;
+        *)
+            echo "[X] Invalid choice. Defaulting to Setup UFW."
+            setup_ufw
+            ;;
     esac
     backups
     setup_splunk
@@ -1077,13 +1124,13 @@ function main {
     patch_vulnerabilities
     check_permissions
     sysctl_config
-    echo "[*] End of full hardening process"
-    echo "[*] Script log can be viewed at $LOG"
-    echo "[*] ***Please install system updates now***"
     web_choice=$(get_input_string "Would you like to perform web hardening? (y/N): ")
     if [ "$web_choice" == "y" ]; then
         harden_web
     fi
+    echo "[*] End of full hardening process"
+    echo "[*] Script log can be viewed at $LOG"
+    echo "[*] ***Please install system updates now***"
 }
 
 ##################### ARGUMENT PARSING #####################
