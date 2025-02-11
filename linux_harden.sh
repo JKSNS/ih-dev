@@ -540,6 +540,7 @@ $2 in OUTBOUND_CONNECTION_TYPES_ARRAY {
   else OUTPUT_RULES[remote[2] "/" $1] = 1;
 }
 EOF
+
     # Make the temporary script executable
     chmod +x "$tmpfile"
     
@@ -548,13 +549,12 @@ EOF
     
     # Remove the temporary file
     rm "$tmpfile"
-}
     
     manual_choice=$(get_input_string "Would you like to add additional iptables rules (port numbers)? (y/n): ")
     if [[ "$manual_choice" == "y" || "$manual_choice" == "Y" ]]; then
         custom_iptables_manual_rules
     fi
-
+    
     read -p "Would you like to open Extended IPtables Management? (y/n): " ext_choice
     if [[ "$ext_choice" == "y" || "$ext_choice" == "Y" ]]; then
         extended_iptables
