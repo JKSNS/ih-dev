@@ -967,12 +967,25 @@ function sysctl_config {
     sudo sysctl -p >/dev/null
 }
 
+# my_secure_sql_installation
+function my_secure_sql_installation {
+    print_banner "My Secure SQL Installation"
+    read -p "Would you like to run mysql_secure_installation? (y/n): " sql_choice
+    if [[ "$sql_choice" == "y" || "$sql_choice" == "Y" ]]; then
+         echo "[*] Running mysql_secure_installation..."
+         sudo mysql_secure_installation
+    else
+         echo "[*] Skipping mysql_secure_installation."
+    fi
+}
+
+# harden_web function:
 function harden_web {
     print_banner "Web Hardening Initiated"
     backup_databases
     secure_php_ini
     install_modsecurity
-    # Additional user security measures (e.g., auditing hidden users) can be added here.
+    my_secure_sql_installation
 }
 
 ##################### MENU FUNCTION #####################
