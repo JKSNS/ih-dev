@@ -470,11 +470,6 @@ BEGIN {
     print(colored("red", "WARNING") ": Existing rules for the " DEFAULT_INPUT_CHAIN " and " DEFAULT_OUTPUT_CHAIN " chains will be flushed!\nPress RETURN to continue.") > "/dev/tty";
     getline < "/dev/tty";
   }
-  # Set default policies to ACCEPT to ensure baseline connectivity.
-  printLog("INFO", "Setting default policies to ACCEPT");
-  print(IPTABLES_CMD, "-P", DEFAULT_INPUT_CHAIN, "ACCEPT");
-  print(IPTABLES_CMD, "-P", DEFAULT_OUTPUT_CHAIN, "ACCEPT");
-  
   printLog("INFO", "Flushing " DEFAULT_INPUT_CHAIN);
   print(IPTABLES_CMD, "-F", DEFAULT_INPUT_CHAIN);
   printLog("INFO", "Flushing " DEFAULT_OUTPUT_CHAIN);
@@ -490,21 +485,20 @@ BEGIN {
   printLog("INFO", "Accepting ICMP traffic from " DEFAULT_INPUT_CHAIN);
   print(IPTABLES_CMD, "-A", DEFAULT_INPUT_CHAIN, "-p icmp -j ACCEPT");
   
-  # Static DNS rules: Allow outbound UDP and TCP on port 53 for each DNS server.
+  # Static DNS rules: allow outbound UDP and TCP on port 53 for each DNS server.
   split(DNS_SERVERS, _DNS_SERVERS);
   for(server in _DNS_SERVERS) {
-    printLog("INFO", "Adding outbound UDP DNS rule for " sprintf("%15s", _DNS_SERVERS[server]));
+    printLog("INFO", "New outbound rule - " sprintf("%15s", _DNS_SERVERS[server]) ":" colored("yellow", sprintf("%5d", 53)) "/udp (" colored("blue", "DNS") ")");
     print(IPTABLES_CMD, "-A", DEFAULT_OUTPUT_CHAIN, "-p", "udp", "-m", "udp", "--dport", 53, "-d", _DNS_SERVERS[server], "-j", "ACCEPT");
   }
   for(server in _DNS_SERVERS) {
-    printLog("INFO", "Adding outbound TCP DNS rule for " sprintf("%15s", _DNS_SERVERS[server]));
+    printLog("INFO", "New outbound rule - " sprintf("%15s", _DNS_SERVERS[server]) ":" colored("yellow", sprintf("%5d", 53)) "/tcp (" colored("blue", "DNS") ")");
     print(IPTABLES_CMD, "-A", DEFAULT_OUTPUT_CHAIN, "-p", "tcp", "-m", "tcp", "--dport", 53, "-d", _DNS_SERVERS[server], "-j", "ACCEPT");
   }
   
-  # Allow inbound traffic destined for the UNRESTRICTED subnets.
   split(UNRESTRICTED_SUBNETS, _UNRESTRICTED_SUBNETS);
   for(subnet in _UNRESTRICTED_SUBNETS) {
-    printLog("INFO", "Allowing inbound traffic for unrestricted subnet " sprintf("%18s", _UNRESTRICTED_SUBNETS[subnet]));
+    printLog("INFO", "New inbound rule - " sprintf("%18s", _UNRESTRICTED_SUBNETS[subnet]) " (" colored("blue", "unrestricted subnet") ")");
     print(IPTABLES_CMD, "-A", DEFAULT_INPUT_CHAIN, "-d", _UNRESTRICTED_SUBNETS[subnet], "-j", "ACCEPT");
   }
   delete INPUT_RULES[0];
@@ -579,20 +573,21 @@ $2 in OUTBOUND_CONNECTION_TYPES_ARRAY {
 }
 EOF
 
-    # Replace the DNS_SERVERS placeholder with the chosen value.
+    # Replace the placeholder with the chosen DNS value
     sed -i "s/##DNS_SERVERS##/$dns_value/" "$tmpfile"
     
-    # Make the temporary script executable and run it with sudo.
+    # Make the temporary script executable and run it with sudo
     chmod +x "$tmpfile"
     sudo "$tmpfile"
     rm "$tmpfile"
     
-    # Ask whether to enter the extended iptables management menu.
+    # Ask whether to enter additional (extended) iptables management
     ext_choice=$(get_input_string "Would you like to add any additional iptables rules? (y/n): ")
     if [[ "$ext_choice" == "y" || "$ext_choice" == "Y" ]]; then
         extended_iptables
     fi
 }
+
 
 # FUNCTION: custom_iptables_manual_rules (inbound)
 function custom_iptables_manual_rules {
