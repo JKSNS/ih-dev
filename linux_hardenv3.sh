@@ -1539,23 +1539,28 @@ EOF
 
 # Main advanced hardening menu to select among the advanced automation options.
 function advanced_hardening {
-    print_banner "Advanced Hardening & Automation"
-    echo "1) Set up iptables persistence cronjob"
-    echo "2) Disable SSHD/Cockpit services"
-    echo "3) Set up firewall maintenance cronjob (monitor open ports)"
-    echo "4) Set up cronjob to clear NAT table"
-    echo "5) Set up cronjob to restart scored services"
-    echo "6) Return to Main Menu"
-    read -p "Enter your choice [1-6]: " adv_choice
-    case $adv_choice in
-       1) setup_iptables_cronjob ;;
-       2) disable_unnecessary_services ;;
-       3) setup_firewall_maintenance_cronjob ;;
-       4) setup_nat_clear_cronjob ;;
-       5) setup_service_restart_cronjob ;;
-       6) echo "[*] Returning to main menu." ;;
-       *) echo "[X] Invalid option." ;;
-    esac
+    local adv_choice
+    while true; do
+        print_banner "Advanced Hardening & Automation"
+        echo "1) Set up iptables persistence cronjob"
+        echo "2) Disable SSHD/Cockpit services"
+        echo "3) Set up firewall maintenance cronjob (monitor open ports)"
+        echo "4) Set up cronjob to clear NAT table"
+        echo "5) Set up cronjob to restart scored services"
+        echo "6) Return to Main Menu"
+        read -p "Enter your choice [1-6]: " adv_choice
+        case $adv_choice in
+            1) setup_iptables_cronjob ;;
+            2) disable_unnecessary_services ;;
+            3) setup_firewall_maintenance_cronjob ;;
+            4) setup_nat_clear_cronjob ;;
+            5) setup_service_restart_cronjob ;;
+            6) echo "[*] Returning to main menu."; break ;;
+            *) echo "[X] Invalid option." ;;
+        esac
+        echo ""
+        read -p "Press ENTER to continue..." dummy
+    done
 }
 
 ##################### WEB HARDENING MENU FUNCTION #####################
