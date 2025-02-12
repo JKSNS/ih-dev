@@ -1158,7 +1158,7 @@ function fix_pam {
             echo "No authconfig, cannot fix PAM on this system"
         fi
     elif command -v apt-get >/dev/null; then
-        sudo DEBIAN_FRONTEND=noninteractive pam-auth-update --force
+        echo "" | sudo DEBIAN_FRONTEND=noninteractive pam-auth-update --force
         sudo apt-get -y --reinstall install libpam-runtime libpam-modules
     elif command -v apk >/dev/null; then
         if [ -d /etc/pam.d ]; then
