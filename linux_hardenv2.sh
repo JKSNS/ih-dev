@@ -84,7 +84,6 @@ function get_users {
 function detect_system_info {
     print_banner "Detecting system info"
     echo "[*] Detecting package manager"
-
     sudo which apt-get &> /dev/null
     apt=$?
     sudo which dnf &> /dev/null
@@ -136,7 +135,7 @@ function install_prereqs {
 function create_ccdc_users {
     print_banner "Creating ccdc users"
 
-    # Prompt once for the default password for new ccdc users (for users other than ccdcuser1 and ccdcuser2)
+    # Prompt once for the default password for new users (applies to users other than ccdcuser1 and ccdcuser2)
     default_password=""
     while true; do
         default_password=$(get_silent_input_string "Enter default password for all users: ")
