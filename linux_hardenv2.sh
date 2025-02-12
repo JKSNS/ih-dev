@@ -685,7 +685,7 @@ function reset_iptables {
 ########################################################################
 # FUNCTION: firewall_configuration_menu
 # New interactive menu that first prompts for firewall type (UFW or IPtables)
-# then displays the appropriate submenu. After each action the menu is redisplayed.
+# then displays the appropriate submenu. After finishing the submenu, it exits.
 ########################################################################
 function firewall_configuration_menu {
     # Prepare system
@@ -693,124 +693,116 @@ function firewall_configuration_menu {
     install_prereqs
     disable_other_firewalls
 
-    while true; do
-        echo
-        echo "Select firewall type:"
-        echo "  1) UFW"
-        echo "  2) IPtables"
-        read -p "Enter your choice [1-2]: " fw_type_choice
-        echo
-        case $fw_type_choice in
-            1)
-                # UFW submenu loop
-                while true; do
-                    echo "===== UFW Menu ====="
-                    echo "  1) Setup UFW"
-                    echo "  2) Create inbound allow rule"
-                    echo "  3) Create outbound allow rule"
-                    echo "  4) Show UFW rules"
-                    echo "  5) Reset UFW"
-                    echo "  6) Exit UFW menu"
-                    read -p "Enter your choice [1-6]: " ufw_choice
-                    echo
-                    case $ufw_choice in
-                        1)
-                            setup_ufw
-                            ;;
-                        2)
-                            echo "[*] Enter inbound port numbers (one per line; hit ENTER on a blank line to finish):"
-                            ports=$(get_input_list)
-                            for port in $ports; do
-                                sudo ufw allow in "$port"
-                                echo "[*] Inbound allow rule added for port $port"
-                            done
-                            ;;
-                        3)
-                            echo "[*] Enter outbound port numbers (one per line; hit ENTER on a blank line to finish):"
-                            ports=$(get_input_list)
-                            for port in $ports; do
-                                sudo ufw allow out "$port"
-                                echo "[*] Outbound allow rule added for port $port"
-                            done
-                            ;;
-                        4)
-                            sudo ufw status numbered
-                            ;;
-                        5)
-                            echo "[*] Resetting UFW..."
-                            sudo ufw --force reset
-                            ;;
-                        6)
-                            break
-                            ;;
-                        *)
-                            echo "[X] Invalid option."
-                            ;;
-                    esac
-                    echo
-                done
-                ;;
-            2)
-                # IPtables submenu loop
-                while true; do
-                    echo "===== IPtables Menu ====="
-                    echo "  1) Setup IPtables"
-                    echo "  2) Create outbound allow rule"
-                    echo "  3) Create inbound allow rule"
-                    echo "  4) Create outbound deny rule"
-                    echo "  5) Create inbound deny rule"
-                    echo "  6) Show IPtables rules"
-                    echo "  7) Reset IPtables"
-                    echo "  8) Exit IPtables menu"
-                    read -p "Enter your choice [1-8]: " ipt_choice
-                    echo
-                    case $ipt_choice in
-                        1)
-                            setup_custom_iptables
-                            ;;
-                        2)
-                            custom_iptables_manual_outbound_rules
-                            ;;
-                        3)
-                            custom_iptables_manual_rules
-                            ;;
-                        4)
-                            read -p "Enter outbound port number to deny: " port
-                            sudo iptables -A OUTPUT --protocol tcp --dport "$port" -j DROP
-                            echo "[*] Outbound deny rule added for port $port"
-                            ;;
-                        5)
-                            read -p "Enter inbound port number to deny: " port
-                            sudo iptables -A INPUT --protocol tcp --dport "$port" -j DROP
-                            echo "[*] Inbound deny rule added for port $port"
-                            ;;
-                        6)
-                            sudo iptables -L -n -v
-                            ;;
-                        7)
-                            reset_iptables
-                            ;;
-                        8)
-                            break
-                            ;;
-                        *)
-                            echo "[X] Invalid option."
-                            ;;
-                    esac
-                    echo
-                done
-                ;;
-            *)
-                echo "[X] Invalid firewall type selection."
-                ;;
-        esac
-
-        read -p "Would you like to select a different firewall type? (y/n): " change_choice
-        if [[ "$change_choice" != "y" && "$change_choice" != "Y" ]]; then
-            break
-        fi
-        echo
-    done
+    echo
+    echo "Select firewall type:"
+    echo "  1) UFW"
+    echo "  2) IPtables"
+    read -p "Enter your choice [1-2]: " fw_type_choice
+    echo
+    case $fw_type_choice in
+        1)
+            # UFW submenu loop
+            while true; do
+                echo "===== UFW Menu ====="
+                echo "  1) Setup UFW"
+                echo "  2) Create inbound allow rule"
+                echo "  3) Create outbound allow rule"
+                echo "  4) Show UFW rules"
+                echo "  5) Reset UFW"
+                echo "  6) Exit UFW menu"
+                read -p "Enter your choice [1-6]: " ufw_choice
+                echo
+                case $ufw_choice in
+                    1)
+                        setup_ufw
+                        ;;
+                    2)
+                        echo "[*] Enter inbound port numbers (one per line; hit ENTER on a blank line to finish):"
+                        ports=$(get_input_list)
+                        for port in $ports; do
+                            sudo ufw allow in "$port"
+                            echo "[*] Inbound allow rule added for port $port"
+                        done
+                        ;;
+                    3)
+                        echo "[*] Enter outbound port numbers (one per line; hit ENTER on a blank line to finish):"
+                        ports=$(get_input_list)
+                        for port in $ports; do
+                            sudo ufw allow out "$port"
+                            echo "[*] Outbound allow rule added for port $port"
+                        done
+                        ;;
+                    4)
+                        sudo ufw status numbered
+                        ;;
+                    5)
+                        echo "[*] Resetting UFW..."
+                        sudo ufw --force reset
+                        ;;
+                    6)
+                        break
+                        ;;
+                    *)
+                        echo "[X] Invalid option."
+                        ;;
+                esac
+                echo
+            done
+            ;;
+        2)
+            # IPtables submenu loop
+            while true; do
+                echo "===== IPtables Menu ====="
+                echo "  1) Setup IPtables"
+                echo "  2) Create outbound allow rule"
+                echo "  3) Create inbound allow rule"
+                echo "  4) Create outbound deny rule"
+                echo "  5) Create inbound deny rule"
+                echo "  6) Show IPtables rules"
+                echo "  7) Reset IPtables"
+                echo "  8) Exit IPtables menu"
+                read -p "Enter your choice [1-8]: " ipt_choice
+                echo
+                case $ipt_choice in
+                    1)
+                        setup_custom_iptables
+                        ;;
+                    2)
+                        custom_iptables_manual_outbound_rules
+                        ;;
+                    3)
+                        custom_iptables_manual_rules
+                        ;;
+                    4)
+                        read -p "Enter outbound port number to deny: " port
+                        sudo iptables -A OUTPUT --protocol tcp --dport "$port" -j DROP
+                        echo "[*] Outbound deny rule added for port $port"
+                        ;;
+                    5)
+                        read -p "Enter inbound port number to deny: " port
+                        sudo iptables -A INPUT --protocol tcp --dport "$port" -j DROP
+                        echo "[*] Inbound deny rule added for port $port"
+                        ;;
+                    6)
+                        sudo iptables -L -n -v
+                        ;;
+                    7)
+                        reset_iptables
+                        ;;
+                    8)
+                        break
+                        ;;
+                    *)
+                        echo "[X] Invalid option."
+                        ;;
+                esac
+                echo
+            done
+            ;;
+        *)
+            echo "[X] Invalid firewall type selection."
+            ;;
+    esac
 }
 
 ########################################################################
