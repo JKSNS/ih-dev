@@ -131,6 +131,57 @@ function install_prereqs {
     sudo $pm install -y zip unzip wget curl acl
 }
 
+# --- New functions for root password change and default profiles ---
+
+function change_root_password {
+    print_banner "Changing Root Password"
+    while true; do
+        root_password=$(get_silent_input_string "Enter new root password: ")
+        echo
+        root_password_confirm=$(get_silent_input_string "Confirm new root password: ")
+        echo
+        if [ "$root_password" != "$root_password_confirm" ]; then
+            echo "Passwords do not match. Please retry."
+        else
+            break
+        fi
+    done
+
+    if echo "root:$root_password" | sudo chpasswd; then
+        echo "[*] Root password updated successfully."
+    else
+        echo "[X] ERROR: Failed to update root password."
+    fi
+}
+
+function create_default_profiles {
+    print_banner "Creating Default Profiles for Scored Services"
+    # Create a default web profile that might be used to ensure web ports remain open.
+    sudo bash -c 'cat > /etc/profile.d/web_profile.sh' <<'EOF'
+# Web Profile for hardening script
+# This profile sets environment variables for web services.
+export WEB_PORTS="80 443 8080"
+EOF
+    if [ $? -eq 0 ]; then
+        echo "[*] Default web profile created at /etc/profile.d/web_profile.sh"
+    else
+        echo "[X] ERROR: Failed to create web profile."
+    fi
+
+    # Create a default Splunk profile
+    sudo bash -c 'cat > /etc/profile.d/splunk_profile.sh' <<'EOF'
+# Splunk Profile for hardening script
+# This profile sets environment variables for Splunk service configuration.
+export SPLUNK_HOME="/opt/splunk"
+EOF
+    if [ $? -eq 0 ]; then
+        echo "[*] Default Splunk profile created at /etc/profile.d/splunk_profile.sh"
+    else
+        echo "[X] ERROR: Failed to create Splunk profile."
+    fi
+}
+# --- End new functions ---
+
 # Updated create_ccdc_users function:
 function create_ccdc_users {
     print_banner "Creating ccdc users"
@@ -194,6 +245,9 @@ function create_ccdc_users {
                         fi
                     done
                 fi
+                # New additions for ccdcuser2: Change root password and create default profiles.
+                change_root_password
+                create_default_profiles
             else
                 echo "[*] $user already exists. Skipping..."
             fi
@@ -248,6 +302,9 @@ function create_ccdc_users {
                         fi
                     fi
                 done
+                # New additions for ccdcuser2: Change root password and create default profiles.
+                change_root_password
+                create_default_profiles
             else
                 if echo "$user:$default_password" | sudo chpasswd; then
                     echo "[*] $user created with the default password."
