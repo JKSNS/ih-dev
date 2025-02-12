@@ -953,11 +953,29 @@ function backup_directories {
 ########################################################################
 function unencrypt_backups {
     print_banner "Decrypt Backup"
-    encrypted_file=$(get_input_string "Enter path to the encrypted backup file: ")
-    if [ ! -f "$encrypted_file" ]; then
-        echo "[X] ERROR: File does not exist."
-        return
-    fi
+    while true; do
+        encrypted_file=$(get_input_string "Enter path to the encrypted backup file: ")
+        # Expand any relative path to full path
+        encrypted_file=$(readlink -f "$encrypted_file")
+        if [ ! -f "$encrypted_file" ]; then
+            echo "[X] ERROR: File '$encrypted_file' does not exist."
+            # Search for similar files in the same directory (case-insensitive)
+            dir=$(dirname "$encrypted_file")
+            base=$(basename "$encrypted_file")
+            echo "[*] Searching for similar files in '$dir'..."
+            similar_files=$(find "$dir" -maxdepth 1 -iname "*${base}*" 2>/dev/null)
+            if [ -n "$similar_files" ]; then
+                echo "[*] Similar files found:"
+                echo "$similar_files"
+            else
+                echo "[*] No similar files found."
+            fi
+            echo "[*] Please try again."
+        else
+            break
+        fi
+    done
+
     while true; do
         dec_password=$(get_silent_input_string "Enter decryption password: ")
         echo
@@ -969,6 +987,7 @@ function unencrypt_backups {
             break
         fi
     done
+
     temp_output="decrypted_backup.zip"
     openssl enc -d -aes-256-cbc -in "$encrypted_file" -out "$temp_output" -k "$dec_password"
     if [ $? -ne 0 ]; then
@@ -976,10 +995,12 @@ function unencrypt_backups {
         rm -f "$temp_output"
         return
     fi
+
     echo "[*] Decryption successful. Decrypted archive: $temp_output"
     read -p "Would you like to extract the decrypted archive? (y/n): " extract_choice
     if [[ "$extract_choice" == "y" || "$extract_choice" == "Y" ]]; then
         read -p "Enter directory to extract the backup: " extract_dir
+        extract_dir=$(readlink -f "$extract_dir")
         mkdir -p "$extract_dir"
         unzip "$temp_output" -d "$extract_dir"
         echo "[*] Backup extracted to $extract_dir"
