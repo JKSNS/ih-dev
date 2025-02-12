@@ -1602,7 +1602,7 @@ function advanced_hardening {
         echo "4) Set up cronjob to clear NAT table"
         echo "5) Set up cronjob to restart firewall service and additional services"
         echo "6) Reset Advanced Hardening Configurations"
-        echo "7) Return to Main Menu"
+        echo "7) Exit Advanced Hardening Menu"
         read -p "Enter your choice [1-7]: " adv_choice
         case $adv_choice in
             1) setup_iptables_cronjob ;;
@@ -1611,7 +1611,7 @@ function advanced_hardening {
             4) setup_nat_clear_cronjob ;;
             5) setup_service_restart_cronjob ;;
             6) reset_advanced_hardening ;;
-            7) echo "[*] Returning to main menu."; break ;;
+            7) echo "[*] Exiting advanced hardening menu."; break ;;
             *) echo "[X] Invalid option." ;;
         esac
         echo ""
