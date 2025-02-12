@@ -52,7 +52,6 @@ function get_silent_input_string {
 
 function get_input_list {
     local input_list=()
-
     while [ "$continue" != "false" ]; do
         input=$(get_input_string "Enter input: (one entry per line; hit enter to continue): ")
         if [ "$input" == "" ]; then
@@ -61,9 +60,6 @@ function get_input_list {
             input_list+=("$input")
         fi
     done
-
-    # Return the list by printing it
-    # Note: Bash functions can't return arrays directly, but we can print them
     echo "${input_list[@]}"
 }
 
@@ -118,7 +114,6 @@ function detect_system_info {
     fi
 
     echo "[*] Detecting sudo group"
-
     groups=$(compgen -g)
     if echo "$groups" | grep -q '^sudo$'; then
         echo '[*] sudo group detected'
@@ -128,22 +123,20 @@ function detect_system_info {
         sudo_group='wheel'
     else
         echo '[X] ERROR: could not detect sudo group'
-	    exit 1
+        exit 1
     fi
 }
 
 function install_prereqs {
     print_banner "Installing prerequisites"
-    # TODO: install a syslog daemon for Splunk?
-    # Needed for both hardening and Splunk installlation
     sudo $pm install -y zip unzip wget curl acl
 }
 
-# Updated create_ccdc_users function
+# Updated create_ccdc_users function:
 function create_ccdc_users {
     print_banner "Creating ccdc users"
 
-    # Prompt once for the default password for new ccdc users (to be used for all users except ccdcuser1 and ccdcuser2)
+    # Prompt once for the default password for new ccdc users (for users other than ccdcuser1 and ccdcuser2)
     default_password=""
     while true; do
         default_password=$(get_silent_input_string "Enter default password for all users: ")
@@ -159,24 +152,48 @@ function create_ccdc_users {
 
     for user in "${ccdc_users[@]}"; do
         if id "$user" &>/dev/null; then
-            # For ccdcuser1 and ccdcuser2, prompt to update their password without asking whether
+            # For ccdcuser1 and ccdcuser2, prompt to update their password.
             if [[ "$user" == "ccdcuser1" ]]; then
-                echo "[*] $user already exists. Updating password for $user:"
-                password=$(get_silent_input_string "Enter new password for $user: ")
-                echo
-                if ! echo "$user:$password" | sudo chpasswd; then
-                    echo "[X] ERROR: Failed to update password for $user"
-                else
-                    echo "[*] Password for $user updated."
+                echo "[*] $user already exists. Do you want to update the password? (y/n): "
+                read -r update_choice
+                if [[ "$update_choice" == "y" || "$update_choice" == "Y" ]]; then
+                    while true; do
+                        password=$(get_silent_input_string "Enter new password for $user: ")
+                        echo
+                        password_confirm=$(get_silent_input_string "Confirm new password for $user: ")
+                        echo
+                        if [ "$password" != "$password_confirm" ]; then
+                            echo "Passwords do not match. Please retry."
+                        else
+                            if ! echo "$user:$password" | sudo chpasswd; then
+                                echo "[X] ERROR: Failed to update password for $user"
+                            else
+                                echo "[*] Password for $user updated."
+                                break
+                            fi
+                        fi
+                    done
                 fi
             elif [[ "$user" == "ccdcuser2" ]]; then
-                echo "[*] $user already exists. Updating password for $user:"
-                password=$(get_silent_input_string "Enter new password for $user: ")
-                echo
-                if ! echo "$user:$password" | sudo chpasswd; then
-                    echo "[X] ERROR: Failed to update password for $user"
-                else
-                    echo "[*] Password for $user updated."
+                echo "[*] $user already exists. Do you want to update the password? (y/n): "
+                read -r update_choice
+                if [[ "$update_choice" == "y" || "$update_choice" == "Y" ]]; then
+                    while true; do
+                        password=$(get_silent_input_string "Enter new password for $user: ")
+                        echo
+                        password_confirm=$(get_silent_input_string "Confirm new password for $user: ")
+                        echo
+                        if [ "$password" != "$password_confirm" ]; then
+                            echo "Passwords do not match. Please retry."
+                        else
+                            if ! echo "$user:$password" | sudo chpasswd; then
+                                echo "[X] ERROR: Failed to update password for $user"
+                            else
+                                echo "[*] Password for $user updated."
+                                break
+                            fi
+                        fi
+                    done
                 fi
             else
                 echo "[*] $user already exists. Skipping..."
@@ -1186,7 +1203,7 @@ function remove_profiles {
     sudo mv /etc/prof{i,y}le /etc/profile.bak 2>/dev/null
 
     # Remove user-specific profile files from /home and /root,
-    # excluding critical accounts (root, ccdcuser1, ccdcuser2)
+    # excluding critical accounts (root, ccdcuser1, and ccdcuser2)
     for f in ".profile" ".bashrc" ".bash_login"; do
         sudo find /home /root \( -path "/root/*" -o -path "/home/ccdcuser1/*" -o -path "/home/ccdcuser2/*" \) -prune -o -name "$f" -exec sudo rm {} \;
     done
