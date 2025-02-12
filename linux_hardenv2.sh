@@ -260,51 +260,10 @@ function create_ccdc_users {
     done
 }
 
-function change_passwords {
-    print_banner "Changing user passwords"
-
-    exclusions=("${ccdc_users[@]}")
-    echo "[*] Currently excluded users: ${exclusions[*]}"
-    echo "[*] Would you like to exclude any additional users?"
-    option=$(get_input_string "(y/N): ")
-    if [ "$option" == "y" ]; then
-        exclusions=$(exclude_users "${exclusions[@]}")
-    fi
-
-    targets=$(get_users '$1 != "nobody" {print $1}' "${exclusions[*]}")
-
-    echo "[*] Enter the new password to be used for all users."
-    while true; do
-        password=""
-        confirm_password=""
-
-        password=$(get_silent_input_string "Enter password: ")
-        echo
-        confirm_password=$(get_silent_input_string "Confirm password: ")
-        echo
-
-        if [ "$password" != "$confirm_password" ]; then
-            echo "Passwords do not match. Please retry."
-        else
-            break
-        fi
-    done
-
-    echo
-
-    echo "[*] Changing passwords..."
-    for user in $targets; do
-        if ! echo "$user:$password" | sudo chpasswd; then
-            echo "[X] ERROR: Failed to change password for $user"
-        else
-            echo "[*] Password for $user has been changed."
-        fi
-    done
-}
+# (The change_passwords function has been omitted to avoid redundant prompting.)
 
 function disable_users {
     print_banner "Disabling users"
-
     nologin_shell=""
     if [ -f /usr/sbin/nologin ]; then
         nologin_shell="/usr/sbin/nologin"
@@ -313,7 +272,6 @@ function disable_users {
     else
         nologin_shell="/bin/false"
     fi
-
     exclusions=("${ccdc_users[@]}")
     exclusions+=("root")
     echo "[*] Currently excluded users: ${exclusions[*]}"
@@ -323,9 +281,7 @@ function disable_users {
         exclusions=$(exclude_users "${exclusions[@]}")
     fi
     targets=$(get_users '/\/bash$|\/sh$|\/ash$|\/zsh$/{print $1}' "${exclusions[*]}")
-
     echo
-
     echo "[*] Disabling users..."
     for user in $targets; do
         sudo usermod -s "$nologin_shell" "$user"
@@ -336,7 +292,6 @@ function disable_users {
 function remove_sudoers {
     print_banner "Removing sudoers"
     echo "[*] Removing users from the $sudo_group group"
-    
     exclusions=("ccdcuser1")
     echo "[*] Currently excluded users: ${exclusions[*]}"
     echo "[*] Would you like to exclude any additional users?"
@@ -345,9 +300,7 @@ function remove_sudoers {
         exclusions=$(exclude_users "${exclusions[@]}")
     fi
     targets=$(get_users '{print $1}' "${exclusions[*]}")
-
     echo
-
     echo "[*] Removing sudo users..."
     for user in $targets; do
         if groups "$user" | grep -q "$sudo_group"; then
