@@ -1056,23 +1056,49 @@ function secure_php_ini {
 
 function secure_ssh {
     print_banner "Securing SSH"
-    if sudo service sshd status > /dev/null; then
-        # Enable root login and disable public-key authentication for root
-        sudo sed -i '1s;^;PermitRootLogin yes\n;' /etc/ssh/sshd_config
-        sudo sed -i '1s;^;PubkeyAuthentication no\n;' /etc/ssh/sshd_config
 
-        # For non-RedHat systems, disable PAM in sshd_config
-        if ! grep -qi "REDHAT_" /etc/os-release; then
-            sudo sed -i '1s;^;UsePAM no\n;' /etc/ssh/sshd_config
+    # Determine the SSH service name.
+    if sudo service sshd status > /dev/null 2>&1; then
+        service_name="sshd"
+    elif sudo service ssh status > /dev/null 2>&1; then
+        service_name="ssh"
+    else
+        echo "[*] SSH service not found. Skipping SSH hardening."
+        return
+    fi
+
+    config_file="/etc/ssh/sshd_config"
+    if [ ! -f "$config_file" ]; then
+        echo "[X] ERROR: SSH configuration file not found: $config_file"
+        return
+    fi
+
+    # Apply SSH hardening settings.
+    # Enable root login and disable public-key authentication for root.
+    sudo sed -i '1s;^;PermitRootLogin yes\n;' "$config_file"
+    sudo sed -i '1s;^;PubkeyAuthentication no\n;' "$config_file"
+
+    # For non-RedHat systems, disable PAM in sshd_config.
+    if ! grep -qi "REDHAT_" /etc/os-release; then
+        sudo sed -i '1s;^;UsePAM no\n;' "$config_file"
+    fi
+
+    sudo sed -i '1s;^;UseDNS no\n;' "$config_file"
+    sudo sed -i '1s;^;PermitEmptyPasswords no\n;' "$config_file"
+    sudo sed -i '1s;^;AddressFamily inet\n;' "$config_file"
+    sudo sed -i '1s;^;Banner none\n;' "$config_file"
+
+    # Test the SSH configuration.
+    if sudo sshd -t; then
+        # Restart the SSH service.
+        if command -v systemctl >/dev/null 2>&1; then
+            sudo systemctl restart "$service_name"
+        else
+            sudo service "$service_name" restart
         fi
-
-        sudo sed -i '1s;^;UseDNS no\n;' /etc/ssh/sshd_config
-        sudo sed -i '1s;^;PermitEmptyPasswords no\n;' /etc/ssh/sshd_config
-        sudo sed -i '1s;^;AddressFamily inet\n;' /etc/ssh/sshd_config
-        sudo sed -i '1s;^;Banner none\n;' /etc/ssh/sshd_config
-
-        # Restart the SSH service if the configuration tests out
-        sudo sshd -t && sudo systemctl restart sshd
+        echo "[*] SSH hardening applied and $service_name restarted."
+    else
+        echo "[X] ERROR: SSH configuration test failed."
     fi
 }
 
