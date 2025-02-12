@@ -310,6 +310,21 @@ function remove_sudoers {
     done
 }
 
+function audit_running_services {
+    print_banner "Auditing Running Services"
+    echo "[*] Listing currently running services:"
+    # Check if systemctl is available (for systemd systems)
+    if command -v systemctl >/dev/null 2>&1; then
+        systemctl list-units --type=service --state=running
+    else
+        # Fallback for non-systemd systems using the service command
+        service --status-all 2>/dev/null
+    fi
+    echo
+    # Prompt the user to confirm readiness to continue
+    read -p "The above services are currently running. Press ENTER when you are ready to continue..." dummy
+}
+
 ########################################################################
 # FUNCTION: disable_other_firewalls
 ########################################################################
@@ -1503,6 +1518,8 @@ function main {
     change_passwords
     disable_users
     remove_sudoers
+    # New function call for service auditing
+    audit_running_services
     disable_other_firewalls
     firewall_configuration_menu
     backups
