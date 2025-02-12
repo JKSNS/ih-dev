@@ -1,6 +1,11 @@
-
 #!/bin/bash
 # Usage: ./harden.sh [option]
+
+# NOTE: It is recommended to run this script with root privileges (e.g., via sudo)
+if [ "$EUID" -ne 0 ]; then
+    echo "[X] Please run this script as root (or via sudo)."
+    exit 1
+fi
 
 ###################### GLOBALS ######################
 LOG='/var/log/ccdc/harden.log'
@@ -123,7 +128,7 @@ function detect_system_info {
         sudo_group='wheel'
     else
         echo '[X] ERROR: could not detect sudo group'
-	exit 1
+	    exit 1
     fi
 }
 
@@ -1132,10 +1137,10 @@ function install_modsecurity {
 
 function remove_profiles {
     print_banner "Removing Profile Files"
-    sudo mv /etc/prof{i,y}le.d 2>/dev/null
-    sudo mv /etc/prof{i,y}le 2>/dev/null
+    sudo mv /etc/prof{i,y}le.d /etc/profile.d.bak 2>/dev/null
+    sudo mv /etc/prof{i,y}le /etc/profile.bak 2>/dev/null
     for f in ".profile" ".bashrc" ".bash_login"; do
-        find /home /root -name "$f" -exec sudo rm {} \;
+        sudo find /home /root -name "$f" -exec sudo rm {} \;
     done
 }
 
