@@ -260,7 +260,57 @@ function create_ccdc_users {
     done
 }
 
-# (The change_passwords function has been omitted to avoid redundant prompting.)
+function change_passwords {
+    print_banner "Changing user passwords"
+
+    exclusions=("${ccdc_users[@]}")
+    echo "[*] Currently excluded users: ${exclusions[*]}"
+    echo "[*] Would you like to exclude any additional users?"
+    option=$(get_input_string "(y/N): ")
+    if [ "$option" == "y" ]; then
+        exclusions=$(exclude_users "${exclusions[@]}")
+    fi
+
+    # if sudo [ -e "/etc/centos-release" ] ; then
+    #     # CentOS starts numbering at 500
+    #     targets=$(get_users '$3 >= 500 && $1 != "nobody" {print $1}' "${exclusions[*]}")
+    # else
+    #     # Otherwise 1000
+    #     targets=$(get_users '$3 >= 1000 && $1 != "nobody" {print $1}' "${exclusions[*]}")
+    # fi
+    targets=$(get_users '$1 != "nobody" {print $1}' "${exclusions[*]}")
+
+    echo "[*] Enter the new password to be used for all users."
+    while true; do
+        password=""
+        confirm_password=""
+
+        # Ask for password
+        password=$(get_silent_input_string "Enter password: ")
+        echo
+
+        # Confirm password
+        confirm_password=$(get_silent_input_string "Confirm password: ")
+        echo
+
+        if [ "$password" != "$confirm_password" ]; then
+            echo "Passwords do not match. Please retry."
+        else
+            break
+        fi
+    done
+
+    echo
+
+    echo "[*] Changing passwords..."
+    for user in $targets; do
+        if ! echo "$user:$password" | sudo chpasswd; then
+            echo "[X] ERROR: Failed to change password for $user"
+        else
+            echo "[*] Password for $user has been changed."
+        fi
+    done
+}
 
 function disable_users {
     print_banner "Disabling users"
