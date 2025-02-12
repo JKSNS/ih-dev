@@ -1519,22 +1519,76 @@ EOF
     echo "[*] NAT table clear cron job created."
 }
 
-# Function to set up a cronjob that restarts a specified service.
+# Function to set up a cronjob that restarts the detected firewall service,
+# then offers to add additional services.
 function setup_service_restart_cronjob {
     print_banner "Setting Up Service Restart Cronjob"
-    read -p "Enter the name of the scored service to restart (e.g., iptables, ufw): " scored_service
-    script_file="/usr/local/sbin/restart_${scored_service}.sh"
-    sudo bash -c "cat > $script_file" <<EOF
+    
+    # Detect active firewall service
+    detected_service=""
+    if command -v ufw &>/dev/null && sudo ufw status 2>/dev/null | grep -q "Status: active"; then
+        detected_service="ufw"
+    elif systemctl is-active firewalld &>/dev/null; then
+        detected_service="firewalld"
+    elif systemctl is-active netfilter-persistent &>/dev/null; then
+        detected_service="netfilter-persistent"
+    else
+        echo "[*] No recognized firewall service detected automatically."
+    fi
+    
+    if [ -n "$detected_service" ]; then
+        echo "[*] Detected firewall service: $detected_service"
+        local script_file="/usr/local/sbin/restart_${detected_service}.sh"
+        sudo bash -c "cat > $script_file" <<EOF
 #!/bin/bash
-systemctl restart $scored_service
+systemctl restart $detected_service
 EOF
-    sudo chmod +x $script_file
-    cron_file="/etc/cron.d/restart_${scored_service}"
-    sudo bash -c "cat > $cron_file" <<EOF
+        sudo chmod +x $script_file
+        local cron_file="/etc/cron.d/restart_${detected_service}"
+        sudo bash -c "cat > $cron_file" <<EOF
 */5 * * * * root $script_file
 EOF
-    echo "[*] Cron job to restart $scored_service created."
-    echo "[*] Note: Restarting $scored_service typically takes less than a second on most systems."
+        echo "[*] Cron job created to restart $detected_service every 5 minutes."
+    fi
+
+    # Offer to add additional services
+    read -p "Would you like to add additional services to restart via cronjob? (y/n): " add_extra
+    if [[ "$add_extra" =~ ^[Yy]$ ]]; then
+        while true; do
+            read -p "Enter the name of the additional service (or leave blank to finish): " extra_service
+            if [ -z "$extra_service" ]; then
+                break
+            fi
+            local extra_script_file="/usr/local/sbin/restart_${extra_service}.sh"
+            sudo bash -c "cat > $extra_script_file" <<EOF
+#!/bin/bash
+systemctl restart $extra_service
+EOF
+            sudo chmod +x $extra_script_file
+            local extra_cron_file="/etc/cron.d/restart_${extra_service}"
+            sudo bash -c "cat > $extra_cron_file" <<EOF
+*/5 * * * * root $extra_script_file
+EOF
+            echo "[*] Cron job created to restart $extra_service every 5 minutes."
+        done
+    fi
+    echo "[*] Service restart configuration complete."
+}
+
+# New function to reset/clear all advanced hardening configurations.
+function reset_advanced_hardening {
+    print_banner "Resetting Advanced Hardening Configurations"
+    echo "[*] Removing iptables persistence cronjob (if exists)..."
+    sudo rm -f /etc/cron.d/iptables_persistence
+    echo "[*] Removing firewall maintenance cronjob and script..."
+    sudo rm -f /etc/cron.d/firewall_maintenance
+    sudo rm -f /usr/local/sbin/firewall_maintain.sh
+    echo "[*] Removing NAT table clear cronjob..."
+    sudo rm -f /etc/cron.d/clear_nat_table
+    echo "[*] Removing service restart cronjobs and scripts..."
+    sudo rm -f /etc/cron.d/restart_*
+    sudo rm -f /usr/local/sbin/restart_*
+    echo "[*] Advanced hardening configurations have been reset."
 }
 
 # Main advanced hardening menu to select among the advanced automation options.
@@ -1546,20 +1600,21 @@ function advanced_hardening {
         echo "2) Disable SSHD/Cockpit services"
         echo "3) Set up firewall maintenance cronjob (monitor open ports)"
         echo "4) Set up cronjob to clear NAT table"
-        echo "5) Set up cronjob to restart scored services"
-        echo "6) Return to Main Menu"
-        read -p "Enter your choice [1-6]: " adv_choice
+        echo "5) Set up cronjob to restart firewall service and additional services"
+        echo "6) Reset Advanced Hardening Configurations"
+        echo "7) Return to Main Menu"
+        read -p "Enter your choice [1-7]: " adv_choice
         case $adv_choice in
             1) setup_iptables_cronjob ;;
             2) disable_unnecessary_services ;;
             3) setup_firewall_maintenance_cronjob ;;
             4) setup_nat_clear_cronjob ;;
             5) setup_service_restart_cronjob ;;
-            6) echo "[*] Returning to main menu."; break ;;
+            6) reset_advanced_hardening ;;
+            7) echo "[*] Returning to main menu."; break ;;
             *) echo "[X] Invalid option." ;;
         esac
         echo ""
-        read -p "Press ENTER to continue..." dummy
     done
 }
 
