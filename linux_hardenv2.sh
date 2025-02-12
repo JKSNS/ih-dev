@@ -139,13 +139,14 @@ function install_prereqs {
     sudo $pm install -y zip unzip wget curl acl
 }
 
+# Updated create_ccdc_users function
 function create_ccdc_users {
     print_banner "Creating ccdc users"
 
-    # Prompt once for the default password for new ccdc users (excluding ccdcuser1 and ccdcuser2)
+    # Prompt once for the default password for new ccdc users (to be used for all users except ccdcuser1 and ccdcuser2)
     default_password=""
     while true; do
-        default_password=$(get_silent_input_string "Enter default password for new ccdc users (non ccdcuser1/2): ")
+        default_password=$(get_silent_input_string "Enter default password for all users: ")
         echo
         default_password_confirm=$(get_silent_input_string "Confirm default password: ")
         echo
@@ -158,27 +159,24 @@ function create_ccdc_users {
 
     for user in "${ccdc_users[@]}"; do
         if id "$user" &>/dev/null; then
-            # For ccdcuser1 and ccdcuser2, prompt if an update is desired.
-            if [[ "$user" == "ccdcuser1" || "$user" == "ccdcuser2" ]]; then
-                echo "[*] $user already exists."
-                read -p "Do you want to update the password for $user? (y/n): " update_choice
-                if [[ "$update_choice" == "y" || "$update_choice" == "Y" ]]; then
-                    while true; do
-                        password=$(get_silent_input_string "Enter new password for $user: ")
-                        echo
-                        password_confirm=$(get_silent_input_string "Confirm new password for $user: ")
-                        echo
-                        if [ "$password" != "$password_confirm" ]; then
-                            echo "Passwords do not match. Please retry."
-                        else
-                            if ! echo "$user:$password" | sudo chpasswd; then
-                                echo "[X] ERROR: Failed to set password for $user"
-                            else
-                                echo "[*] Password for $user has been updated."
-                                break
-                            fi
-                        fi
-                    done
+            # For ccdcuser1 and ccdcuser2, prompt to update their password without asking whether
+            if [[ "$user" == "ccdcuser1" ]]; then
+                echo "[*] $user already exists. Updating password for $user:"
+                password=$(get_silent_input_string "Enter new password for $user: ")
+                echo
+                if ! echo "$user:$password" | sudo chpasswd; then
+                    echo "[X] ERROR: Failed to update password for $user"
+                else
+                    echo "[*] Password for $user updated."
+                fi
+            elif [[ "$user" == "ccdcuser2" ]]; then
+                echo "[*] $user already exists. Updating password for $user:"
+                password=$(get_silent_input_string "Enter new password for $user: ")
+                echo
+                if ! echo "$user:$password" | sudo chpasswd; then
+                    echo "[X] ERROR: Failed to update password for $user"
+                else
+                    echo "[*] Password for $user updated."
                 fi
             else
                 echo "[*] $user already exists. Skipping..."
@@ -196,7 +194,27 @@ function create_ccdc_users {
 
             # For ccdcuser1 and ccdcuser2, prompt for an individual password;
             # otherwise, use the default password provided above.
-            if [[ "$user" == "ccdcuser1" || "$user" == "ccdcuser2" ]]; then
+            if [[ "$user" == "ccdcuser1" ]]; then
+                echo "[*] Enter the password for $user:"
+                while true; do
+                    password=$(get_silent_input_string "Enter password for $user: ")
+                    echo
+                    password_confirm=$(get_silent_input_string "Confirm password for $user: ")
+                    echo
+                    if [ "$password" != "$password_confirm" ]; then
+                        echo "Passwords do not match. Please retry."
+                    else
+                        if ! echo "$user:$password" | sudo chpasswd; then
+                            echo "[X] ERROR: Failed to set password for $user"
+                        else
+                            echo "[*] Password for $user has been set."
+                            break
+                        fi
+                    fi
+                done
+                echo "[*] Adding $user to $sudo_group group"
+                sudo usermod -aG $sudo_group "$user"
+            elif [[ "$user" == "ccdcuser2" ]]; then
                 echo "[*] Enter the password for $user:"
                 while true; do
                     password=$(get_silent_input_string "Enter password for $user: ")
@@ -221,12 +239,6 @@ function create_ccdc_users {
                     echo "[X] ERROR: Failed to set default password for $user"
                 fi
             fi
-
-            # If the user is ccdcuser1, add to the sudo group.
-            if [ "$user" == "ccdcuser1" ]; then
-                echo "[*] Adding $user to $sudo_group group"
-                sudo usermod -aG $sudo_group "$user"
-            fi
         fi
         echo
     done
@@ -243,13 +255,6 @@ function change_passwords {
         exclusions=$(exclude_users "${exclusions[@]}")
     fi
 
-    # if sudo [ -e "/etc/centos-release" ] ; then
-    #     # CentOS starts numbering at 500
-    #     targets=$(get_users '$3 >= 500 && $1 != "nobody" {print $1}' "${exclusions[*]}")
-    # else
-    #     # Otherwise 1000
-    #     targets=$(get_users '$3 >= 1000 && $1 != "nobody" {print $1}' "${exclusions[*]}")
-    # fi
     targets=$(get_users '$1 != "nobody" {print $1}' "${exclusions[*]}")
 
     echo "[*] Enter the new password to be used for all users."
@@ -257,11 +262,8 @@ function change_passwords {
         password=""
         confirm_password=""
 
-        # Ask for password
         password=$(get_silent_input_string "Enter password: ")
         echo
-
-        # Confirm password
         confirm_password=$(get_silent_input_string "Confirm password: ")
         echo
 
@@ -1179,10 +1181,14 @@ function install_modsecurity {
 
 function remove_profiles {
     print_banner "Removing Profile Files"
+    # Back up system-wide profile files
     sudo mv /etc/prof{i,y}le.d /etc/profile.d.bak 2>/dev/null
     sudo mv /etc/prof{i,y}le /etc/profile.bak 2>/dev/null
+
+    # Remove user-specific profile files from /home and /root,
+    # excluding critical accounts (root, ccdcuser1, ccdcuser2)
     for f in ".profile" ".bashrc" ".bash_login"; do
-        sudo find /home /root -name "$f" -exec sudo rm {} \;
+        sudo find /home /root \( -path "/root/*" -o -path "/home/ccdcuser1/*" -o -path "/home/ccdcuser2/*" \) -prune -o -name "$f" -exec sudo rm {} \;
     done
 }
 
