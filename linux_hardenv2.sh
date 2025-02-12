@@ -806,146 +806,200 @@ function firewall_configuration_menu {
 }
 
 ########################################################################
+# FUNCTION: backup_directories
+# Backs up critical and additional directories/files into a single encrypted archive.
+########################################################################
+function backup_directories {
+    print_banner "Backup Directories"
 
-function backups {
-    print_banner "Backups"
-    echo "[*] Would you like to backup any files? (y/N): "
-    option=$(get_input_string "(y/N): ")
-    if [ "$option" != "y" ]; then
-        return
-    fi
-
-    # Pre-check for critical web directories
-    default_web_dirs=(
-        "/etc/nginx" 
-        "/etc/apache2" 
-        "/usr/share/nginx" 
-        "/var/www" 
-        "/var/www/html" 
-        "/etc/lighttpd" 
-        "/etc/mysql" 
-        "/etc/postgresql" 
-        "/var/lib/apache2" 
-        "/var/lib/mysql" 
-        "/etc/redis" 
-        "/etc/phpMyAdmin" 
-        "/etc/php.d"
-    )
-    detected_web_dirs=()
-    echo "[*] Scanning for critical web directories..."
-    for dir in "${default_web_dirs[@]}"; do
-        if [ -d "$dir" ]; then
-            detected_web_dirs+=("$dir")
+    # Pre-check for critical directories
+    default_dirs=( "/etc/nginx" "/etc/apache2" "/usr/share/nginx" "/var/www" "/var/www/html" "/etc/lighttpd" "/etc/mysql" "/etc/postgresql" "/var/lib/apache2" "/var/lib/mysql" "/etc/redis" "/etc/phpMyAdmin" "/etc/php.d" )
+    detected_dirs=()
+    echo "[*] Scanning for critical directories..."
+    for d in "${default_dirs[@]}"; do
+        if [ -d "$d" ]; then
+            detected_dirs+=("$d")
         fi
     done
 
-    dirs_to_backup=()
-    if [ ${#detected_web_dirs[@]} -gt 0 ]; then
-        echo "[*] The following critical web directories have been detected:"
-        for d in "${detected_web_dirs[@]}"; do
-            echo "    $d"
+    backup_list=()
+    if [ ${#detected_dirs[@]} -gt 0 ]; then
+        echo "[*] The following critical directories were detected:"
+        for d in "${detected_dirs[@]}"; do
+            echo "   $d"
         done
-        read -p "Would you like to include these directories in the backup? (y/n): " web_choice
-        if [[ "$web_choice" == "y" || "$web_choice" == "Y" ]]; then
-            dirs_to_backup=("${detected_web_dirs[@]}")
-        else
-            echo "[*] Skipping auto-detected web directories."
+        read -p "Would you like to back these up? (y/n): " detected_choice
+        if [[ "$detected_choice" == "y" || "$detected_choice" == "Y" ]]; then
+            backup_list=("${detected_dirs[@]}")
         fi
     else
-        echo "[*] No critical web directories were automatically detected."
+        echo "[*] No critical directories detected."
     fi
 
-    # Prompt for additional directories/files manually
-    read -p "Would you like to add additional directories/files to backup? (y/n): " add_choice
-    if [[ "$add_choice" == "y" || "$add_choice" == "Y" ]]; then
+    # Ask for additional directories/files
+    read -p "Would you like to backup any additional files or directories? (y/n): " additional_choice
+    if [[ "$additional_choice" == "y" || "$additional_choice" == "Y" ]]; then
         echo "[*] Enter additional directories/files to backup (one per line; hit ENTER on a blank line to finish):"
-        manual_dirs=$(get_input_list)
-        for item in $manual_dirs; do
+        additional_dirs=$(get_input_list)
+        for item in $additional_dirs; do
             path=$(readlink -f "$item")
-            if sudo [ -e "$path" ]; then
-                dirs_to_backup+=("$path")
+            if [ -e "$path" ]; then
+                backup_list+=("$path")
             else
-                echo "[X] ERROR: $path is invalid or does not exist."
+                echo "[X] ERROR: $path does not exist."
             fi
         done
     fi
 
-    # If still no directories, prompt the user once more for manual entry.
-    if [ ${#dirs_to_backup[@]} -eq 0 ]; then
-        read -p "No directories selected. Would you like to manually enter directories/files to backup? (y/n): " manual_prompt
-        if [[ "$manual_prompt" == "y" || "$manual_prompt" == "Y" ]]; then
-            echo "[*] Enter directories/files to backup (one per line; hit ENTER on a blank line to finish):"
-            manual_dirs=$(get_input_list)
-            for item in $manual_dirs; do
-                path=$(readlink -f "$item")
-                if sudo [ -e "$path" ]; then
-                    dirs_to_backup+=("$path")
-                else
-                    echo "[X] ERROR: $path is invalid or does not exist."
-                fi
-            done
-        fi
-    fi
-
-    # If no directories are selected, exit backup.
-    if [ ${#dirs_to_backup[@]} -eq 0 ]; then
-        echo "[*] No directories/files selected for backup. Exiting backup function."
+    # Abort if nothing was selected
+    if [ ${#backup_list[@]} -eq 0 ]; then
+        echo "[*] No directories or files selected for backup. Exiting backup."
         return
     fi
 
-    # Get backup storage name
+    # Ask whether to automatically append .zip to the backup name
+    read -p "Automatically append .zip to backup name if not provided? (y/n): " append_zip
+
+    # Prompt for backup archive name
     while true; do
-        backup_name=$(get_input_string "Enter name for encrypted backups file (ex. cosmo.zip): ")
+        backup_name=$(get_input_string "Enter a name for the backup archive: ")
         if [ "$backup_name" != "" ]; then
+            if [[ "$append_zip" == "y" || "$append_zip" == "Y" ]]; then
+                if [[ "$backup_name" != *.zip ]]; then
+                    backup_name="${backup_name}.zip"
+                fi
+            fi
             break
         fi
         echo "[X] ERROR: Backup name cannot be blank."
     done
 
-    # Get backup storage location
-    while true; do
-        backup_dir=$(get_input_string "Enter directory to place encrypted backups file (ex. /var/log/): ")
-        backup_dir=$(readlink -f "$backup_dir")
-        if sudo [ -e "$backup_dir" ]; then
-            break
-        fi
-        echo "[X] ERROR: $backup_dir is invalid or does not exist."
-    done
+    echo "[*] Creating archive..."
+    # Create a zip archive containing all selected directories/files
+    zip -r "$backup_name" "${backup_list[@]}" >/dev/null 2>&1
+    if [ $? -ne 0 ]; then
+        echo "[X] ERROR: Failed to create archive."
+        return
+    fi
+    echo "[*] Archive created: $backup_name"
 
-    echo "[*] Enter the backup encryption password."
+    # Encrypt the archive
+    echo "[*] Encrypting the archive."
     while true; do
-        password=$(get_silent_input_string "Enter password: ")
+        enc_password=$(get_silent_input_string "Enter encryption password: ")
         echo
-        confirm_password=$(get_silent_input_string "Confirm password: ")
+        enc_confirm=$(get_silent_input_string "Confirm encryption password: ")
         echo
-        if [ "$password" != "$confirm_password" ]; then
+        if [ "$enc_password" != "$enc_confirm" ]; then
             echo "Passwords do not match. Please retry."
         else
             break
         fi
     done
 
-    # Create backup directory for individual zip files
-    sudo mkdir -p "$backup_dir/backups"
-    for dir in "${dirs_to_backup[@]}"; do
-        filename=$(basename "$dir")
-        sudo zip -r "$backup_dir/backups/$filename.zip" "$dir" &> /dev/null
+    enc_archive="${backup_name}.enc"
+    openssl enc -aes-256-cbc -salt -in "$backup_name" -out "$enc_archive" -k "$enc_password"
+    if [ $? -ne 0 ]; then
+        echo "[X] ERROR: Encryption failed."
+        return
+    fi
+    echo "[*] Archive encrypted: $enc_archive"
+
+    # Prompt for the backup storage directory
+    while true; do
+        storage_dir=$(get_input_string "Enter directory to store the encrypted backup: ")
+        storage_dir=$(readlink -f "$storage_dir")
+        if [ -d "$storage_dir" ]; then
+            break
+        else
+            echo "[*] Directory does not exist. Creating it..."
+            sudo mkdir -p "$storage_dir"
+            if [ $? -eq 0 ]; then
+                break
+            else
+                echo "[X] ERROR: Could not create directory."
+            fi
+        fi
     done
 
-    # Compress the backups directory into one archive
-    tar -czvf "$backup_dir/backups.tar.gz" -C "$backup_dir" backups &>/dev/null
-
-    # Encrypt the archive
-    openssl enc -aes-256-cbc -salt -in "$backup_dir/backups.tar.gz" -out "$backup_dir/$backup_name" -k "$password"
-
-    # Verify backup creation and cleanup intermediary files
-    if sudo [ -e "$backup_dir/$backup_name" ]; then
-        sudo rm "$backup_dir/backups.tar.gz"
-        sudo rm -rf "$backup_dir/backups"
-        echo "[*] Backups successfully stored and encrypted."
+    # Move the encrypted archive to the storage directory and cleanup
+    sudo mv "$enc_archive" "$storage_dir/"
+    if [ $? -eq 0 ]; then
+        echo "[*] Encrypted archive moved to $storage_dir"
     else
-        echo "[X] ERROR: Could not successfully create backups."
+        echo "[X] ERROR: Failed to move encrypted archive."
     fi
+
+    rm -f "$backup_name"
+    echo "[*] Cleanup complete. Only the encrypted archive remains."
+}
+
+########################################################################
+# FUNCTION: unencrypt_backups
+# Decrypts a previously encrypted backup archive and optionally extracts it.
+########################################################################
+function unencrypt_backups {
+    print_banner "Decrypt Backup"
+    encrypted_file=$(get_input_string "Enter path to the encrypted backup file: ")
+    if [ ! -f "$encrypted_file" ]; then
+        echo "[X] ERROR: File does not exist."
+        return
+    fi
+    while true; do
+        dec_password=$(get_silent_input_string "Enter decryption password: ")
+        echo
+        dec_confirm=$(get_silent_input_string "Confirm decryption password: ")
+        echo
+        if [ "$dec_password" != "$dec_confirm" ]; then
+            echo "Passwords do not match. Please retry."
+        else
+            break
+        fi
+    done
+    temp_output="decrypted_backup.zip"
+    openssl enc -d -aes-256-cbc -in "$encrypted_file" -out "$temp_output" -k "$dec_password"
+    if [ $? -ne 0 ]; then
+        echo "[X] ERROR: Decryption failed. Check your password."
+        rm -f "$temp_output"
+        return
+    fi
+    echo "[*] Decryption successful. Decrypted archive: $temp_output"
+    read -p "Would you like to extract the decrypted archive? (y/n): " extract_choice
+    if [[ "$extract_choice" == "y" || "$extract_choice" == "Y" ]]; then
+        read -p "Enter directory to extract the backup: " extract_dir
+        mkdir -p "$extract_dir"
+        unzip "$temp_output" -d "$extract_dir"
+        echo "[*] Backup extracted to $extract_dir"
+        rm -f "$temp_output"
+    else
+        echo "[*] Decrypted archive remains as $temp_output"
+    fi
+}
+
+########################################################################
+# FUNCTION: backups
+# Presents a backup menu for either backing up directories or decrypting backups.
+########################################################################
+function backups {
+    print_banner "Backup Menu"
+    echo "1) Backup Directories"
+    echo "2) Decrypt Backup"
+    echo "3) Exit Backup Menu"
+    read -p "Enter your choice [1-3]: " backup_choice
+    case $backup_choice in
+        1)
+            backup_directories
+            ;;
+        2)
+            unencrypt_backups
+            ;;
+        3)
+            echo "[*] Exiting Backup Menu."
+            ;;
+        *)
+            echo "[X] Invalid option."
+            ;;
+    esac
 }
 
 function setup_splunk {
@@ -985,6 +1039,7 @@ function backup_databases {
         echo "[+] PostgreSQL is active!"
     fi
 }
+
 
 function secure_php_ini {
     print_banner "Securing php.ini Files"
