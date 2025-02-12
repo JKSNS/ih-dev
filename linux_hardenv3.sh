@@ -1404,7 +1404,125 @@ function harden_web {
     manage_web_immutability
 }
 
-##################### NEW WEB HARDENING MENU FUNCTION #####################
+
+##################### ADVANCED HARDENING FUNCTIONS #####################
+
+# Function to set up a cronjob that saves iptables rules persistently.
+function setup_iptables_cronjob {
+    print_banner "Setting Up Iptables Persistence Cronjob"
+    if grep -qi 'fedora\|centos\|rhel' /etc/os-release; then
+        cron_file="/etc/cron.d/iptables_persistence"
+        sudo bash -c "cat > $cron_file" <<EOF
+*/5 * * * * root /sbin/iptables-save > /etc/sysconfig/iptables
+EOF
+        echo "[*] Cron job created at $cron_file for RHEL-based systems."
+    elif grep -qi 'debian\|ubuntu' /etc/os-release; then
+        cron_file="/etc/cron.d/iptables_persistence"
+        sudo bash -c "cat > $cron_file" <<EOF
+*/5 * * * * root /sbin/iptables-save > /etc/iptables/rules.v4
+EOF
+        echo "[*] Cron job created at $cron_file for Debian-based systems."
+    else
+        echo "[*] Unknown OS. Please set up a cron job manually for iptables persistence."
+    fi
+}
+
+# Function to disable unnecessary services (with a caution about SSH).
+function disable_unnecessary_services {
+    print_banner "Disabling Unnecessary Services"
+    read -p "Disable SSHD? (WARNING: may lock you out if remote) (y/n): " disable_sshd
+    if [[ "$disable_sshd" =~ ^[Yy]$ ]]; then
+        if systemctl is-active sshd &> /dev/null; then
+            sudo systemctl stop sshd
+            sudo systemctl disable sshd
+            echo "[*] SSHD service disabled."
+        else
+            echo "[*] SSHD service not active."
+        fi
+    fi
+    read -p "Disable Cockpit? (y/n): " disable_cockpit
+    if [[ "$disable_cockpit" =~ ^[Yy]$ ]]; then
+        if systemctl is-active cockpit &> /dev/null; then
+            sudo systemctl stop cockpit
+            sudo systemctl disable cockpit
+            echo "[*] Cockpit service disabled."
+        else
+            echo "[*] Cockpit service not active."
+        fi
+    fi
+}
+
+# Function to set up a cronjob that monitors open ports and re-applies iptables rules.
+function setup_firewall_maintenance_cronjob {
+    print_banner "Setting Up Firewall Maintenance Cronjob"
+    # Create a script that re-applies rules for open ports
+    script_file="/usr/local/sbin/firewall_maintain.sh"
+    sudo bash -c "cat > $script_file" <<'EOF'
+#!/bin/bash
+open_ports=$(ss -lnt | awk 'NR>1 {print $4}' | awk -F':' '{print $NF}' | sort -u)
+for port in $open_ports; do
+    # Check if a rule exists; if not, add one to allow TCP traffic on the port.
+    iptables -C INPUT -p tcp --dport $port -j ACCEPT 2>/dev/null || iptables -A INPUT -p tcp --dport $port -j ACCEPT
+done
+EOF
+    sudo chmod +x $script_file
+    cron_file="/etc/cron.d/firewall_maintenance"
+    sudo bash -c "cat > $cron_file" <<EOF
+*/5 * * * * root $script_file
+EOF
+    echo "[*] Firewall maintenance cron job created."
+}
+
+# Function to set up a cronjob that clears the NAT table periodically.
+function setup_nat_clear_cronjob {
+    print_banner "Setting Up NAT Table Clear Cronjob"
+    cron_file="/etc/cron.d/clear_nat_table"
+    sudo bash -c "cat > $cron_file" <<EOF
+*/5 * * * * root /sbin/iptables -t nat -F
+EOF
+    echo "[*] NAT table clear cron job created."
+}
+
+# Function to set up a cronjob that restarts a specified service.
+function setup_service_restart_cronjob {
+    print_banner "Setting Up Service Restart Cronjob"
+    read -p "Enter the name of the scored service to restart (e.g., iptables, ufw): " scored_service
+    script_file="/usr/local/sbin/restart_${scored_service}.sh"
+    sudo bash -c "cat > $script_file" <<EOF
+#!/bin/bash
+systemctl restart $scored_service
+EOF
+    sudo chmod +x $script_file
+    cron_file="/etc/cron.d/restart_${scored_service}"
+    sudo bash -c "cat > $cron_file" <<EOF
+*/5 * * * * root $script_file
+EOF
+    echo "[*] Cron job to restart $scored_service created."
+    echo "[*] Note: Restarting $scored_service typically takes less than a second on most systems."
+}
+
+# Main advanced hardening menu to select among the advanced automation options.
+function advanced_hardening {
+    print_banner "Advanced Hardening & Automation"
+    echo "1) Set up iptables persistence cronjob"
+    echo "2) Disable SSHD/Cockpit services"
+    echo "3) Set up firewall maintenance cronjob (monitor open ports)"
+    echo "4) Set up cronjob to clear NAT table"
+    echo "5) Set up cronjob to restart scored services"
+    echo "6) Return to Main Menu"
+    read -p "Enter your choice [1-6]: " adv_choice
+    case $adv_choice in
+       1) setup_iptables_cronjob ;;
+       2) disable_unnecessary_services ;;
+       3) setup_firewall_maintenance_cronjob ;;
+       4) setup_nat_clear_cronjob ;;
+       5) setup_service_restart_cronjob ;;
+       6) echo "[*] Returning to main menu." ;;
+       *) echo "[X] Invalid option." ;;
+    esac
+}
+
+##################### WEB HARDENING MENU FUNCTION #####################
 function show_web_hardening_menu {
     print_banner "Web Hardening Menu"
     echo "1) Run Full Web Hardening Process"
@@ -1453,7 +1571,7 @@ function show_web_hardening_menu {
     esac
 }
 
-##################### MENU FUNCTION #####################
+##################### MAIN MENU FUNCTION #####################
 function show_menu {
     print_banner "Hardening Script Menu"
     echo "1) Full Hardening Process (Run all)"
@@ -1464,9 +1582,10 @@ function show_menu {
     echo "6) SSH Hardening"
     echo "7) PAM/Profile Fixes & System Config"
     echo "8) Web Hardening"
-    echo "9) Exit"
+    echo "9) Advanced Hardening"
+    echo "10) Exit"
     echo
-    read -p "Enter your choice [1-9]: " menu_choice
+    read -p "Enter your choice [1-10]: " menu_choice
     echo
     case $menu_choice in
         1) main ;;
@@ -1500,6 +1619,9 @@ function show_menu {
             show_web_hardening_menu
             ;;
         9)
+            advanced_hardening
+            ;;
+        10)
             echo "Exiting..."; exit 0
             ;;
         *)
@@ -1518,7 +1640,7 @@ function main {
     change_passwords
     disable_users
     remove_sudoers
-    # New function call for service auditing
+    # New function call for service auditing (if implemented)
     audit_running_services
     disable_other_firewalls
     firewall_configuration_menu
