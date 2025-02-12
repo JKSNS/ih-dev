@@ -608,10 +608,36 @@ EOF
     sudo "$tmpfile"
     rm "$tmpfile"
     
+    # Save the iptables rules persistently
+    save_iptables_rules
+
     # Ask whether to enter additional (extended) iptables management
     ext_choice=$(get_input_string "Would you like to add any additional iptables rules? (y/n): ")
     if [[ "$ext_choice" == "y" || "$ext_choice" == "Y" ]]; then
         extended_iptables
+    fi
+}
+
+########################################################################
+# FUNCTION: save_iptables_rules
+# Saves current iptables rules persistently based on the detected OS.
+########################################################################
+function save_iptables_rules {
+    if grep -qi 'fedora\|centos\|rhel' /etc/os-release; then
+        sudo iptables-save | sudo tee /etc/sysconfig/iptables > /dev/null
+        echo "[*] Iptables rules saved to /etc/sysconfig/iptables"
+    elif grep -qi 'debian\|ubuntu' /etc/os-release; then
+        if [ -f /etc/iptables/rules.v4 ]; then
+            sudo iptables-save | sudo tee /etc/iptables/rules.v4 > /dev/null
+            echo "[*] Iptables rules saved to /etc/iptables/rules.v4"
+        elif command -v netfilter-persistent &> /dev/null; then
+            sudo netfilter-persistent save
+            echo "[*] Iptables rules saved using netfilter-persistent"
+        else
+            echo "[!] Warning: iptables persistent saving is not configured on this system."
+        fi
+    else
+        echo "[*] Unknown OS. Please ensure iptables rules are saved manually if needed."
     fi
 }
 
@@ -626,6 +652,7 @@ function custom_iptables_manual_rules {
     for port in $ports; do
         sudo iptables -A INPUT --protocol tcp --dport "$port" -j ACCEPT
         echo "[*] Inbound iptables rule added for port $port (TCP)"
+        save_iptables_rules
     done
 }
 
@@ -640,6 +667,7 @@ function custom_iptables_manual_outbound_rules {
     for port in $ports; do
         sudo iptables -A OUTPUT --protocol tcp --dport "$port" -j ACCEPT
         echo "[*] Outbound iptables rule added for port $port (TCP)"
+        save_iptables_rules
     done
 }
 
@@ -664,27 +692,32 @@ function extended_iptables {
                 read -p "Enter outbound port number: " port
                 sudo iptables -A OUTPUT --protocol tcp --dport "$port" -j ACCEPT
                 echo "Outbound ACCEPT rule added for port $port"
+                save_iptables_rules
                 ;;
             2)
                 read -p "Enter inbound port number: " port
                 sudo iptables -A INPUT --protocol tcp --dport "$port" -j ACCEPT
                 echo "Inbound ACCEPT rule added for port $port"
+                save_iptables_rules
                 ;;
             3)
                 read -p "Enter outbound port number to deny: " port
                 sudo iptables -A OUTPUT --protocol tcp --dport "$port" -j DROP
                 echo "Outbound DROP rule added for port $port"
+                save_iptables_rules
                 ;;
             4)
                 read -p "Enter inbound port number to deny: " port
                 sudo iptables -A INPUT --protocol tcp --dport "$port" -j DROP
                 echo "Inbound DROP rule added for port $port"
+                save_iptables_rules
                 ;;
             5)
                 sudo iptables -L -n -v
                 ;;
             6)
                 reset_iptables
+                save_iptables_rules
                 ;;
             7)
                 echo "Exiting Extended IPtables Management."
@@ -810,17 +843,20 @@ function firewall_configuration_menu {
                         read -p "Enter outbound port number to deny: " port
                         sudo iptables -A OUTPUT --protocol tcp --dport "$port" -j DROP
                         echo "[*] Outbound deny rule added for port $port"
+                        save_iptables_rules
                         ;;
                     5)
                         read -p "Enter inbound port number to deny: " port
                         sudo iptables -A INPUT --protocol tcp --dport "$port" -j DROP
                         echo "[*] Inbound deny rule added for port $port"
+                        save_iptables_rules
                         ;;
                     6)
                         sudo iptables -L -n -v
                         ;;
                     7)
                         reset_iptables
+                        save_iptables_rules
                         ;;
                     8)
                         break
@@ -1619,7 +1655,7 @@ function show_menu {
             show_web_hardening_menu
             ;;
         9)
-            advanced_hardening
+            advanced_hardening   # (Assuming you’ve defined your advanced_hardening function)
             ;;
         10)
             echo "Exiting..."; exit 0
