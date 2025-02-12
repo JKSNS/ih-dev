@@ -877,7 +877,7 @@ function backup_directories {
 
     # Prompt for backup archive name; .zip will be automatically appended if not provided
     while true; do
-        backup_name=$(get_input_string "Enter a name for the backup archive (without extension): ")
+        backup_name=$(get_input_string "Enter a name for the backup archive (without extension .zip): ")
         if [ "$backup_name" != "" ]; then
             if [[ "$backup_name" != *.zip ]]; then
                 backup_name="${backup_name}.zip"
