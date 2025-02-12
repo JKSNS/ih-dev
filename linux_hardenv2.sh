@@ -141,11 +141,50 @@ function install_prereqs {
 
 function create_ccdc_users {
     print_banner "Creating ccdc users"
+
+    # Prompt once for the default password for new ccdc users (excluding ccdcuser1 and ccdcuser2)
+    default_password=""
+    while true; do
+        default_password=$(get_silent_input_string "Enter default password for new ccdc users (non ccdcuser1/2): ")
+        echo
+        default_password_confirm=$(get_silent_input_string "Confirm default password: ")
+        echo
+        if [ "$default_password" != "$default_password_confirm" ]; then
+            echo "Passwords do not match. Please retry."
+        else
+            break
+        fi
+    done
+
     for user in "${ccdc_users[@]}"; do
         if id "$user" &>/dev/null; then
-            echo "[*] $user already exists. Skipping..."
+            # For ccdcuser1 and ccdcuser2, prompt if an update is desired.
+            if [[ "$user" == "ccdcuser1" || "$user" == "ccdcuser2" ]]; then
+                echo "[*] $user already exists."
+                read -p "Do you want to update the password for $user? (y/n): " update_choice
+                if [[ "$update_choice" == "y" || "$update_choice" == "Y" ]]; then
+                    while true; do
+                        password=$(get_silent_input_string "Enter new password for $user: ")
+                        echo
+                        password_confirm=$(get_silent_input_string "Confirm new password for $user: ")
+                        echo
+                        if [ "$password" != "$password_confirm" ]; then
+                            echo "Passwords do not match. Please retry."
+                        else
+                            if ! echo "$user:$password" | sudo chpasswd; then
+                                echo "[X] ERROR: Failed to set password for $user"
+                            else
+                                echo "[*] Password for $user has been updated."
+                                break
+                            fi
+                        fi
+                    done
+                fi
+            else
+                echo "[*] $user already exists. Skipping..."
+            fi
         else
-            echo "[*] $user not found. Attempting to create..."
+            echo "[*] $user not found. Creating user..."
             if [ -f "/bin/bash" ]; then
                 sudo useradd -m -s /bin/bash "$user"
             elif [ -f "/bin/sh" ]; then
@@ -154,35 +193,38 @@ function create_ccdc_users {
                 echo "[X] ERROR: Could not find valid shell"
                 exit 1
             fi
-            
-            echo "[*] Enter the new password for $user:"
-            while true; do
-                password=""
-                confirm_password=""
 
-                # Ask for password
-                password=$(get_silent_input_string "Enter password: ")
-                echo
-
-                # Confirm password
-                confirm_password=$(get_silent_input_string "Confirm password: ")
-                echo
-
-                if [ "$password" != "$confirm_password" ]; then
-                    echo "Passwords do not match. Please retry."
-                    continue
-                fi
-
-                if ! echo "$user:$password" | sudo chpasswd; then
-                    echo "[X] ERROR: Failed to set password for $user"
+            # For ccdcuser1 and ccdcuser2, prompt for an individual password;
+            # otherwise, use the default password provided above.
+            if [[ "$user" == "ccdcuser1" || "$user" == "ccdcuser2" ]]; then
+                echo "[*] Enter the password for $user:"
+                while true; do
+                    password=$(get_silent_input_string "Enter password for $user: ")
+                    echo
+                    password_confirm=$(get_silent_input_string "Confirm password for $user: ")
+                    echo
+                    if [ "$password" != "$password_confirm" ]; then
+                        echo "Passwords do not match. Please retry."
+                    else
+                        if ! echo "$user:$password" | sudo chpasswd; then
+                            echo "[X] ERROR: Failed to set password for $user"
+                        else
+                            echo "[*] Password for $user has been set."
+                            break
+                        fi
+                    fi
+                done
+            else
+                if echo "$user:$default_password" | sudo chpasswd; then
+                    echo "[*] $user created with the default password."
                 else
-                    echo "[*] Password for $user has been set."
-                    break
+                    echo "[X] ERROR: Failed to set default password for $user"
                 fi
-            done
+            fi
 
+            # If the user is ccdcuser1, add to the sudo group.
             if [ "$user" == "ccdcuser1" ]; then
-                echo "[*] Adding to $sudo_group group"
+                echo "[*] Adding $user to $sudo_group group"
                 sudo usermod -aG $sudo_group "$user"
             fi
         fi
