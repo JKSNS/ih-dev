@@ -857,17 +857,12 @@ function backup_directories {
         return
     fi
 
-    # Ask whether to automatically append .zip to the backup name
-    read -p "Automatically append .zip to backup name if not provided? (y/n): " append_zip
-
-    # Prompt for backup archive name
+    # Prompt for backup archive name; .zip will be automatically appended if not provided
     while true; do
-        backup_name=$(get_input_string "Enter a name for the backup archive: ")
+        backup_name=$(get_input_string "Enter a name for the backup archive (without extension): ")
         if [ "$backup_name" != "" ]; then
-            if [[ "$append_zip" == "y" || "$append_zip" == "Y" ]]; then
-                if [[ "$backup_name" != *.zip ]]; then
-                    backup_name="${backup_name}.zip"
-                fi
+            if [[ "$backup_name" != *.zip ]]; then
+                backup_name="${backup_name}.zip"
             fi
             break
         fi
@@ -1380,7 +1375,7 @@ function show_menu {
     echo "1) Full Hardening Process (Run all)"
     echo "2) User Management"
     echo "3) Firewall Configuration"
-    echo "4) Backups"
+    echo "4) Backup"
     echo "5) Splunk Installation"
     echo "6) SSH Hardening"
     echo "7) PAM/Profile Fixes & System Config"
@@ -1402,18 +1397,30 @@ function show_menu {
         3)
             firewall_configuration_menu
             ;;
-        4) backups ;;
-        5) setup_splunk ;;
-        6) secure_ssh ;;
+        4)
+            backups
+            ;;
+        5)
+            setup_splunk
+            ;;
+        6)
+            secure_ssh
+            ;;
         7)
             fix_pam
             remove_profiles
             check_permissions
             sysctl_config
             ;;
-        8) show_web_hardening_menu ;;
-        9) echo "Exiting..."; exit 0 ;;
-        *) echo "Invalid option. Exiting."; exit 1 ;;
+        8)
+            show_web_hardening_menu
+            ;;
+        9)
+            echo "Exiting..."; exit 0
+            ;;
+        *)
+            echo "Invalid option. Exiting."; exit 1
+            ;;
     esac
 }
 
