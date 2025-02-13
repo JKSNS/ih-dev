@@ -131,8 +131,7 @@ function install_prereqs {
     sudo $pm install -y zip unzip wget curl acl
 }
 
-# --- New function for root password change ---
-
+# --- New function for root password change with confirmation prompt ---
 function change_root_password {
     print_banner "Changing Root Password"
     while true; do
@@ -153,8 +152,14 @@ function change_root_password {
         echo "[X] ERROR: Failed to update root password."
     fi
 }
-
 # --- End new function ---
+
+# New function to audit running services safely.
+function audit_running_services {
+    print_banner "Auditing Running Services"
+    echo "[*] Listing running services (TCP/UDP listening ports):"
+    ss -tuln
+}
 
 # Updated create_ccdc_users function:
 function create_ccdc_users {
@@ -205,8 +210,12 @@ function create_ccdc_users {
                         fi
                     done
                 fi
-                # New addition for ccdcuser2: Change root password.
-                change_root_password
+                # New addition for ccdcuser2: Prompt whether to change root password.
+                echo "[*] Would you like to change the root password? (y/n): "
+                read -r root_choice
+                if [[ "$root_choice" == "y" || "$root_choice" == "Y" ]]; then
+                    change_root_password
+                fi
             else
                 echo "[*] $user already exists. Skipping..."
             fi
@@ -221,8 +230,7 @@ function create_ccdc_users {
                 exit 1
             fi
 
-            # For ccdcuser1 and ccdcuser2, prompt for an individual password;
-            # otherwise, use the default password provided above.
+            # For ccdcuser1 and ccdcuser2, prompt for an individual password.
             if [[ "$user" == "ccdcuser1" ]]; then
                 echo "[*] Enter the password for $user:"
                 while true; do
@@ -261,8 +269,12 @@ function create_ccdc_users {
                         fi
                     fi
                 done
-                # New addition for ccdcuser2: Change root password.
-                change_root_password
+                # New addition for ccdcuser2: Prompt whether to change root password.
+                echo "[*] Would you like to change the root password? (y/n): "
+                read -r root_choice
+                if [[ "$root_choice" == "y" || "$root_choice" == "Y" ]]; then
+                    change_root_password
+                fi
             else
                 if echo "$user:$default_password" | sudo chpasswd; then
                     echo "[*] $user created with the default password."
