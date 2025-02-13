@@ -131,7 +131,7 @@ function install_prereqs {
     sudo $pm install -y zip unzip wget curl acl
 }
 
-# --- New functions for root password change and default profiles ---
+# --- New function for root password change ---
 
 function change_root_password {
     print_banner "Changing Root Password"
@@ -154,33 +154,7 @@ function change_root_password {
     fi
 }
 
-function create_default_profiles {
-    print_banner "Creating Default Profiles for Scored Services"
-    # Create a default web profile that might be used to ensure web ports remain open.
-    sudo bash -c 'cat > /etc/profile.d/web_profile.sh' <<'EOF'
-# Web Profile for hardening script
-# This profile sets environment variables for web services.
-export WEB_PORTS="80 443 8080"
-EOF
-    if [ $? -eq 0 ]; then
-        echo "[*] Default web profile created at /etc/profile.d/web_profile.sh"
-    else
-        echo "[X] ERROR: Failed to create web profile."
-    fi
-
-    # Create a default Splunk profile
-    sudo bash -c 'cat > /etc/profile.d/splunk_profile.sh' <<'EOF'
-# Splunk Profile for hardening script
-# This profile sets environment variables for Splunk service configuration.
-export SPLUNK_HOME="/opt/splunk"
-EOF
-    if [ $? -eq 0 ]; then
-        echo "[*] Default Splunk profile created at /etc/profile.d/splunk_profile.sh"
-    else
-        echo "[X] ERROR: Failed to create Splunk profile."
-    fi
-}
-# --- End new functions ---
+# --- End new function ---
 
 # Updated create_ccdc_users function:
 function create_ccdc_users {
@@ -245,9 +219,8 @@ function create_ccdc_users {
                         fi
                     done
                 fi
-                # New additions for ccdcuser2: Change root password and create default profiles.
+                # New addition for ccdcuser2: Change root password.
                 change_root_password
-                create_default_profiles
             else
                 echo "[*] $user already exists. Skipping..."
             fi
@@ -302,9 +275,8 @@ function create_ccdc_users {
                         fi
                     fi
                 done
-                # New additions for ccdcuser2: Change root password and create default profiles.
+                # New addition for ccdcuser2: Change root password.
                 change_root_password
-                create_default_profiles
             else
                 if echo "$user:$default_password" | sudo chpasswd; then
                     echo "[*] $user created with the default password."
@@ -320,7 +292,8 @@ function create_ccdc_users {
 function change_passwords {
     print_banner "Changing user passwords"
 
-    exclusions=("${ccdc_users[@]}")
+    # Exclude root, ccdcuser1, and ccdcuser2
+    exclusions=("root" "${ccdc_users[@]}")
     echo "[*] Currently excluded users: ${exclusions[*]}"
     echo "[*] Would you like to exclude any additional users?"
     option=$(get_input_string "(y/N): ")
@@ -328,13 +301,7 @@ function change_passwords {
         exclusions=$(exclude_users "${exclusions[@]}")
     fi
 
-    # if sudo [ -e "/etc/centos-release" ] ; then
-    #     # CentOS starts numbering at 500
-    #     targets=$(get_users '$3 >= 500 && $1 != "nobody" {print $1}' "${exclusions[*]}")
-    # else
-    #     # Otherwise 1000
-    #     targets=$(get_users '$3 >= 1000 && $1 != "nobody" {print $1}' "${exclusions[*]}")
-    # fi
+    # Get targets (all users not matching "nobody" and not in the exclusions list)
     targets=$(get_users '$1 != "nobody" {print $1}' "${exclusions[*]}")
 
     echo "[*] Enter the new password to be used for all users."
