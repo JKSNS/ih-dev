@@ -152,14 +152,6 @@ function change_root_password {
         echo "[X] ERROR: Failed to update root password."
     fi
 }
-# --- End new function ---
-
-# New function to audit running services safely.
-function audit_running_services {
-    print_banner "Auditing Running Services"
-    echo "[*] Listing running services (TCP/UDP listening ports):"
-    ss -tuln
-}
 
 # Updated create_ccdc_users function:
 function create_ccdc_users {
@@ -382,19 +374,11 @@ function remove_sudoers {
     done
 }
 
+# New function to audit running services safely.
 function audit_running_services {
     print_banner "Auditing Running Services"
-    echo "[*] Listing currently running services:"
-    # Check if systemctl is available (for systemd systems)
-    if command -v systemctl >/dev/null 2>&1; then
-        systemctl list-units --type=service --state=running
-    else
-        # Fallback for non-systemd systems using the service command
-        service --status-all 2>/dev/null
-    fi
-    echo
-    # Prompt the user to confirm readiness to continue
-    read -p "The above services are currently running. Press ENTER when you are ready to continue..." dummy
+    echo "[*] Listing running services (TCP/UDP listening ports):"
+    ss -tuln
 }
 
 ########################################################################
