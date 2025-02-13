@@ -201,7 +201,7 @@ function create_ccdc_users {
                         fi
                     done
                 fi
-                # New addition for ccdcuser2: Prompt whether to change root password.
+    
                 echo "[*] Would you like to change the root password? (y/N): "
                 read -r root_choice
                 if [[ "$root_choice" == "y" || "$root_choice" == "Y" ]]; then
@@ -260,7 +260,7 @@ function create_ccdc_users {
                         fi
                     fi
                 done
-                # New addition for ccdcuser2: Prompt whether to change root password.
+                
                 echo "[*] Would you like to change the root password? (y/N): "
                 read -r root_choice
                 if [[ "$root_choice" == "y" || "$root_choice" == "Y" ]]; then
