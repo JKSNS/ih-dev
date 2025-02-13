@@ -1792,7 +1792,6 @@ function main {
     change_passwords
     disable_users
     remove_sudoers
-    # New function call for service auditing (if implemented)
     audit_running_services
     disable_other_firewalls
     firewall_configuration_menu
@@ -1810,11 +1809,14 @@ function main {
     if [ "$web_choice" == "y" ]; then
         show_web_hardening_menu
     fi
+    adv_choice=$(get_input_string "Would you like to perform advanced hardening? (y/N): ")
+    if [ "$adv_choice" == "y" ]; then
+        advanced_hardening
+    fi
     echo "[*] End of full hardening process"
     echo "[*] Script log can be viewed at $LOG"
     echo "[*] ***Please install system updates now***"
 }
-
 ##################### ARGUMENT PARSING #####################
 for arg in "$@"; do
     case "$arg" in
