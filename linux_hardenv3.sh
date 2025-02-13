@@ -1658,7 +1658,7 @@ function run_full_advanced_hardening {
 function advanced_hardening {
     local adv_choice
     while true; do
-        print_banner "Advanced Hardening & Automation"
+        print_banner "Advanced Hardening & Automation #TESTING, JUST PLACEHOLDERS"
         echo "1) Run Full Advanced Hardening Process"
         echo "2) Set up iptables persistence cronjob"
         echo "3) Disable SSHD/Cockpit services"
