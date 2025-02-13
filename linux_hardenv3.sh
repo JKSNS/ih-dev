@@ -160,20 +160,6 @@ function change_root_password {
 function create_ccdc_users {
     print_banner "Creating ccdc users"
 
-    # Prompt once for the default password for new users (applies to users other than ccdcuser1 and ccdcuser2)
-    default_password=""
-    while true; do
-        default_password=$(get_silent_input_string "Enter default password for all users: ")
-        echo
-        default_password_confirm=$(get_silent_input_string "Confirm default password: ")
-        echo
-        if [ "$default_password" != "$default_password_confirm" ]; then
-            echo "Passwords do not match. Please retry."
-        else
-            break
-        fi
-    done
-
     for user in "${ccdc_users[@]}"; do
         if id "$user" &>/dev/null; then
             # For ccdcuser1 and ccdcuser2, prompt to update their password.
