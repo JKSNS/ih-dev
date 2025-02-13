@@ -1647,27 +1647,39 @@ function reset_advanced_hardening {
     echo "[*] Advanced hardening configurations have been reset."
 }
 
-# Main advanced hardening menu to select among the advanced automation options.
+function run_full_advanced_hardening {
+    print_banner "Running Full Advanced Hardening Process"
+    setup_iptables_cronjob
+    disable_unnecessary_services
+    setup_firewall_maintenance_cronjob
+    setup_nat_clear_cronjob
+    setup_service_restart_cronjob
+    echo "[*] Full Advanced Hardening Process Completed."
+}
+
+# Modified advanced_hardening menu
 function advanced_hardening {
     local adv_choice
     while true; do
         print_banner "Advanced Hardening & Automation"
-        echo "1) Set up iptables persistence cronjob"
-        echo "2) Disable SSHD/Cockpit services"
-        echo "3) Set up firewall maintenance cronjob (monitor open ports)"
-        echo "4) Set up cronjob to clear NAT table"
-        echo "5) Set up cronjob to restart firewall service and additional services"
-        echo "6) Reset Advanced Hardening Configurations"
-        echo "7) Exit Advanced Hardening Menu"
-        read -p "Enter your choice [1-7]: " adv_choice
+        echo "1) Run Full Advanced Hardening Process"
+        echo "2) Set up iptables persistence cronjob"
+        echo "3) Disable SSHD/Cockpit services"
+        echo "4) Set up firewall maintenance cronjob (monitor open ports)"
+        echo "5) Set up cronjob to clear NAT table"
+        echo "6) Set up cronjob to restart firewall service and additional services"
+        echo "7) Reset Advanced Hardening Configurations"
+        echo "8) Exit Advanced Hardening Menu"
+        read -p "Enter your choice [1-8]: " adv_choice
         case $adv_choice in
-            1) setup_iptables_cronjob ;;
-            2) disable_unnecessary_services ;;
-            3) setup_firewall_maintenance_cronjob ;;
-            4) setup_nat_clear_cronjob ;;
-            5) setup_service_restart_cronjob ;;
-            6) reset_advanced_hardening ;;
-            7) echo "[*] Exiting advanced hardening menu."; break ;;
+            1) run_full_advanced_hardening ;;
+            2) setup_iptables_cronjob ;;
+            3) disable_unnecessary_services ;;
+            4) setup_firewall_maintenance_cronjob ;;
+            5) setup_nat_clear_cronjob ;;
+            6) setup_service_restart_cronjob ;;
+            7) reset_advanced_hardening ;;
+            8) echo "[*] Exiting advanced hardening menu."; break ;;
             *) echo "[X] Invalid option." ;;
         esac
         echo ""
