@@ -131,7 +131,6 @@ function install_prereqs {
     sudo $pm install -y zip unzip wget curl acl
 }
 
-# --- New function for root password change with confirmation prompt ---
 function change_root_password {
     print_banner "Changing Root Password"
     while true; do
@@ -161,7 +160,7 @@ function create_ccdc_users {
         if id "$user" &>/dev/null; then
             # For ccdcuser1 and ccdcuser2, prompt to update their password.
             if [[ "$user" == "ccdcuser1" ]]; then
-                echo "[*] $user already exists. Do you want to update the password? (y/n): "
+                echo "[*] $user already exists. Do you want to update the password? (y/N): "
                 read -r update_choice
                 if [[ "$update_choice" == "y" || "$update_choice" == "Y" ]]; then
                     while true; do
@@ -182,7 +181,7 @@ function create_ccdc_users {
                     done
                 fi
             elif [[ "$user" == "ccdcuser2" ]]; then
-                echo "[*] $user already exists. Do you want to update the password? (y/n): "
+                echo "[*] $user already exists. Do you want to update the password? (y/N): "
                 read -r update_choice
                 if [[ "$update_choice" == "y" || "$update_choice" == "Y" ]]; then
                     while true; do
@@ -203,7 +202,7 @@ function create_ccdc_users {
                     done
                 fi
                 # New addition for ccdcuser2: Prompt whether to change root password.
-                echo "[*] Would you like to change the root password? (y/n): "
+                echo "[*] Would you like to change the root password? (y/N): "
                 read -r root_choice
                 if [[ "$root_choice" == "y" || "$root_choice" == "Y" ]]; then
                     change_root_password
@@ -262,7 +261,7 @@ function create_ccdc_users {
                     fi
                 done
                 # New addition for ccdcuser2: Prompt whether to change root password.
-                echo "[*] Would you like to change the root password? (y/n): "
+                echo "[*] Would you like to change the root password? (y/N): "
                 read -r root_choice
                 if [[ "$root_choice" == "y" || "$root_choice" == "Y" ]]; then
                     change_root_password
@@ -374,7 +373,6 @@ function remove_sudoers {
     done
 }
 
-# New function to audit running services safely.
 function audit_running_services {
     print_banner "Auditing Running Services"
     echo "[*] Listing running services (TCP/UDP listening ports):"
@@ -668,7 +666,7 @@ EOF
     save_iptables_rules
 
     # Ask whether to enter additional (extended) iptables management
-    ext_choice=$(get_input_string "Would you like to add any additional iptables rules? (y/n): ")
+    ext_choice=$(get_input_string "Would you like to add any additional iptables rules? (y/N): ")
     if [[ "$ext_choice" == "y" || "$ext_choice" == "Y" ]]; then
         extended_iptables
     fi
@@ -953,7 +951,7 @@ function backup_directories {
         for d in "${detected_dirs[@]}"; do
             echo "   $d"
         done
-        read -p "Would you like to back these up? (y/n): " detected_choice
+        read -p "Would you like to back these up? (y/N): " detected_choice
         if [[ "$detected_choice" == "y" || "$detected_choice" == "Y" ]]; then
             backup_list=("${detected_dirs[@]}")
         fi
@@ -962,7 +960,7 @@ function backup_directories {
     fi
 
     # Ask for additional directories/files
-    read -p "Would you like to backup any additional files or directories? (y/n): " additional_choice
+    read -p "Would you like to backup any additional files or directories? (y/N): " additional_choice
     if [[ "$additional_choice" == "y" || "$additional_choice" == "Y" ]]; then
         echo "[*] Enter additional directories/files to backup (one per line; hit ENTER on a blank line to finish):"
         additional_dirs=$(get_input_list)
@@ -1104,7 +1102,7 @@ function unencrypt_backups {
     fi
 
     echo "[*] Decryption successful. Decrypted archive: $temp_output"
-    read -p "Would you like to extract the decrypted archive? (y/n): " extract_choice
+    read -p "Would you like to extract the decrypted archive? (y/N): " extract_choice
     if [[ "$extract_choice" == "y" || "$extract_choice" == "Y" ]]; then
         read -p "Enter directory to extract the backup: " extract_dir
         extract_dir=$(readlink -f "$extract_dir")
@@ -1416,7 +1414,7 @@ function sysctl_config {
 # my_secure_sql_installation
 function my_secure_sql_installation {
     print_banner "My Secure SQL Installation"
-    read -p "Would you like to run mysql_secure_installation? (y/n): " sql_choice
+    read -p "Would you like to run mysql_secure_installation? (y/N): " sql_choice
     if [[ "$sql_choice" == "y" || "$sql_choice" == "Y" ]]; then
          echo "[*] Running mysql_secure_installation..."
          sudo mysql_secure_installation
@@ -1467,14 +1465,14 @@ function manage_web_immutability {
         echo "    $d"
     done
 
-    read -p "Would you like to set these directories to immutable? (y/n): " imm_choice
+    read -p "Would you like to set these directories to immutable? (y/N): " imm_choice
     if [[ "$imm_choice" == "y" || "$imm_choice" == "Y" ]]; then
         for d in "${detected_web_dirs[@]}"; do
             sudo chattr +i "$d"
             echo "[*] Set immutable flag on $d"
         done
     else
-        read -p "Would you like to remove the immutable flag from these directories? (y/n): " unimm_choice
+        read -p "Would you like to remove the immutable flag from these directories? (y/N): " unimm_choice
         if [[ "$unimm_choice" == "y" || "$unimm_choice" == "Y" ]]; then
             for d in "${detected_web_dirs[@]}"; do
                 sudo chattr -i "$d"
@@ -1522,7 +1520,7 @@ EOF
 # Function to disable unnecessary services (with a caution about SSH).
 function disable_unnecessary_services {
     print_banner "Disabling Unnecessary Services"
-    read -p "Disable SSHD? (WARNING: may lock you out if remote) (y/n): " disable_sshd
+    read -p "Disable SSHD? (WARNING: may lock you out if remote) (y/N): " disable_sshd
     if [[ "$disable_sshd" =~ ^[Yy]$ ]]; then
         if systemctl is-active sshd &> /dev/null; then
             sudo systemctl stop sshd
@@ -1532,7 +1530,7 @@ function disable_unnecessary_services {
             echo "[*] SSHD service not active."
         fi
     fi
-    read -p "Disable Cockpit? (y/n): " disable_cockpit
+    read -p "Disable Cockpit? (y/N): " disable_cockpit
     if [[ "$disable_cockpit" =~ ^[Yy]$ ]]; then
         if systemctl is-active cockpit &> /dev/null; then
             sudo systemctl stop cockpit
@@ -1608,7 +1606,7 @@ EOF
     fi
 
     # Offer to add additional services
-    read -p "Would you like to add additional services to restart via cronjob? (y/n): " add_extra
+    read -p "Would you like to add additional services to restart via cronjob? (y/N): " add_extra
     if [[ "$add_extra" =~ ^[Yy]$ ]]; then
         while true; do
             read -p "Enter the name of the additional service (or leave blank to finish): " extra_service
@@ -1631,7 +1629,6 @@ EOF
     echo "[*] Service restart configuration complete."
 }
 
-# New function to reset/clear all advanced hardening configurations.
 function reset_advanced_hardening {
     print_banner "Resetting Advanced Hardening Configurations"
     echo "[*] Removing iptables persistence cronjob (if exists)..."
