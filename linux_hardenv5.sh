@@ -339,7 +339,7 @@ function disable_users {
     echo
     echo "[*] Disabling user accounts using passwd -l and setting shell to nologin..."
     for user in $targets; do
-        if sudo passwd -l "$user"; then
+        if sudo usermod -l "$user"; then
             echo "[*] Account for $user has been locked."
             if sudo usermod -s /usr/sbin/nologin "$user"; then
                 echo "[*] Login shell for $user set to nologin."
