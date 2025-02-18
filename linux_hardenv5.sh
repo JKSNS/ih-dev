@@ -14,6 +14,7 @@ pm=""
 sudo_group=""
 ccdc_users=( "ccdcuser1" "ccdcuser2" )
 debug="false"
+IPTABLES_BACKUP="/tmp/iptables_backup.rules"
 #####################################################
 
 ##################### FUNCTIONS #####################
@@ -392,6 +393,21 @@ function disable_other_firewalls {
     # The other potential firewall services remain commented out.
 }
 
+function backup_current_iptables_rules {
+    echo "[*] Backing up current iptables rules to $IPTABLES_BACKUP"
+    sudo iptables-save > "$IPTABLES_BACKUP"
+}
+
+
+function restore_iptables_rules {
+    if [ -f "$IPTABLES_BACKUP" ]; then
+        echo "[*] Restoring iptables rules from $IPTABLES_BACKUP"
+        sudo iptables-restore < "$IPTABLES_BACKUP"
+    else
+        echo "[X] No iptables backup file found."
+    fi
+}
+
 ########################################################################
 # FUNCTION: setup_ufw
 # Configures UFW firewall rules with a strict outbound deny policy (except DNS)
@@ -521,8 +537,10 @@ function setup_custom_iptables {
 ########################################################################
 function iptables_disable_default_deny {
     print_banner "Temporarily Disabling iptables Default Deny Outgoing Policy"
+    backup_current_iptables_rules
     sudo iptables -P OUTPUT ACCEPT
-    echo "[*] iptables OUTPUT policy is now set to ACCEPT."
+    sudo iptables -P INPUT ACCEPT
+    echo "[*] iptables default policies are now set to ACCEPT (backup saved)."
 }
 
 ########################################################################
@@ -531,13 +549,10 @@ function iptables_disable_default_deny {
 ########################################################################
 function iptables_enable_default_deny {
     print_banner "Re-enabling iptables Default Deny Outgoing Policy"
+    restore_iptables_rules
     sudo iptables -P OUTPUT DROP
-    # Re-add essential rules:
-    sudo iptables -A OUTPUT -o lo -j ACCEPT
-    sudo iptables -A OUTPUT -p tcp --dport 53 -j ACCEPT
-    sudo iptables -A OUTPUT -p udp --dport 53 -j ACCEPT
-    sudo iptables -A OUTPUT -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT
-    echo "[*] iptables OUTPUT policy is now set to DROP with essential rules re-added."
+    sudo iptables -P INPUT DROP
+    echo "[*] iptables default policies are now set to DROP (custom rules preserved from backup)."
 }
 
 ########################################################################
