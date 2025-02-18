@@ -399,23 +399,24 @@ function disable_other_firewalls {
 function setup_ufw {
     print_banner "Configuring ufw"
     sudo $pm install -y ufw
-    sudo which ufw &> /dev/null
-    if [ $? -eq 0 ]; then
-        echo -e "[*] Package ufw installed successfully\n"
-        echo "[*] Which ports should be opened for incoming traffic?"
-        echo "      WARNING: Do NOT forget to add 22/SSH if needed - please don't accidentally lock yourself out of the system!"
-        sudo ufw --force disable
-        sudo ufw --force reset
-        ports=$(get_input_list)
-        for port in $ports; do
-            sudo ufw allow "$port"
-            echo "[*] Rule added for port $port"
-        done
-        sudo ufw logging on
-        sudo ufw --force enable
-    else
-        echo "[X] ERROR: Package ufw failed to install. Firewall will need to be configured manually"
-    fi
+    # Immediately reset UFW so that the new rules will be the only ones present.
+    sudo ufw --force disable
+    sudo ufw --force reset
+    # Set default outbound policy to deny
+    sudo ufw default deny outgoing
+    echo -e "[*] Package ufw installed successfully\n"
+    echo "[*] Which ports should be opened for incoming traffic?"
+    echo "      WARNING: Do NOT forget to add 22/SSH if needed - please don't accidentally lock yourself out of the system!"
+    ports=$(get_input_list)
+    for port in $ports; do
+        sudo ufw allow "$port"
+        echo "[*] Rule added for port $port"
+    done
+    # Example: explicitly allow DNS outbound traffic on port 53
+    sudo ufw allow out 53/tcp
+    sudo ufw allow out 53/udp
+    sudo ufw logging on
+    sudo ufw --force enable
 }
 
 ########################################################################
@@ -426,6 +427,11 @@ function setup_ufw {
 function setup_custom_iptables {
     print_banner "Configuring iptables (Custom Script)"
     
+    # Reset iptables so that the new rules will be the only ones in effect.
+    reset_iptables
+    # Set default OUTPUT policy to DROP (restrict outbound traffic)
+    sudo iptables -P OUTPUT DROP
+
     echo "Select your DNS server option:"
     echo "  1) Use Cloudflare DNS servers (1.1.1.1, 1.0.0.1)"
     echo "  2) Use default gateway/router as your DNS server"
@@ -459,7 +465,7 @@ sh -c "ss -napH4 | awk -f $BASH_SOURCE" {0..0}
 "exit" {0..0}
 #endregion bash
 
-# Tested ss options: napOH4, napH4
+# Tested ss options: napOH4, napOH4
 
 # Configuration
 BEGIN {
