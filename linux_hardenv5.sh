@@ -337,17 +337,17 @@ function disable_users {
     fi
     targets=$(get_users '/\/bash$|\/sh$|\/ash$|\/zsh$/{print $1}' "${exclusions[*]}")
     echo
-    echo "[*] Disabling user accounts using passwd -l and setting shell to nologin..."
+    echo "[*] Disabling user accounts using usermod -L and setting shell to nologin..."
     for user in $targets; do
         if sudo usermod -L "$user"; then
-            echo "[*] Account for $user has been locked."
+            echo "[*] Account for $user has been locked (usermod -L)."
             if sudo usermod -s /usr/sbin/nologin "$user"; then
                 echo "[*] Login shell for $user set to nologin."
             else
                 echo "[X] ERROR: Failed to set nologin shell for $user."
             fi
         else
-            echo "[X] ERROR: Failed to lock account for $user."
+            echo "[X] ERROR: Failed to lock account for $user using usermod -L."
         fi
     done
 }
@@ -813,6 +813,10 @@ function firewall_configuration_menu {
     install_prereqs
     disable_other_firewalls
 
+    # Run audit_running_services before the firewall menu pops up
+    audit_running_services
+    read -p "Press ENTER to continue to the firewall configuration menu..." dummy
+
     echo
     echo "Select firewall type:"
     echo "  1) UFW"
@@ -829,8 +833,9 @@ function firewall_configuration_menu {
                 echo "  3) Create outbound allow rule"
                 echo "  4) Show UFW rules"
                 echo "  5) Reset UFW"
-                echo "  6) Exit UFW menu"
-                read -p "Enter your choice [1-6]: " ufw_choice
+                echo "  6) Show Running Services"
+                echo "  7) Exit UFW menu"
+                read -p "Enter your choice [1-7]: " ufw_choice
                 echo
                 case $ufw_choice in
                     1)
@@ -860,6 +865,9 @@ function firewall_configuration_menu {
                         sudo ufw --force reset
                         ;;
                     6)
+                        audit_running_services
+                        ;;
+                    7)
                         break
                         ;;
                     *)
@@ -880,8 +888,9 @@ function firewall_configuration_menu {
                 echo "  5) Create inbound deny rule"
                 echo "  6) Show IPtables rules"
                 echo "  7) Reset IPtables"
-                echo "  8) Exit IPtables menu"
-                read -p "Enter your choice [1-8]: " ipt_choice
+                echo "  8) Show Running Services"
+                echo "  9) Exit IPtables menu"
+                read -p "Enter your choice [1-9]: " ipt_choice
                 echo
                 case $ipt_choice in
                     1)
@@ -913,6 +922,9 @@ function firewall_configuration_menu {
                         save_iptables_rules
                         ;;
                     8)
+                        audit_running_services
+                        ;;
+                    9)
                         break
                         ;;
                     *)
