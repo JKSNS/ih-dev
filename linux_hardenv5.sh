@@ -394,43 +394,66 @@ function disable_other_firewalls {
 
 ########################################################################
 # FUNCTION: setup_ufw
-# Configures UFW firewall rules.
+# Configures UFW firewall rules with a strict outbound deny policy (except DNS)
+# and disables IPv6.
 ########################################################################
 function setup_ufw {
     print_banner "Configuring ufw"
     sudo $pm install -y ufw
+
+    # Disable IPv6 in UFW configuration (edit /etc/default/ufw)
+    sudo sed -i 's/^IPV6=yes/IPV6=no/' /etc/default/ufw
+
     # Immediately reset UFW so that the new rules will be the only ones present.
     sudo ufw --force disable
     sudo ufw --force reset
-    # Set default outbound policy to deny
+
+    # Set default policies: deny all outgoing and incoming traffic by default.
     sudo ufw default deny outgoing
-    echo -e "[*] Package ufw installed successfully\n"
-    echo "[*] Which ports should be opened for incoming traffic?"
-    echo "      WARNING: Do NOT forget to add 22/SSH if needed - please don't accidentally lock yourself out of the system!"
+    sudo ufw default deny incoming
+
+    # Explicitly allow DNS (port 53) traffic for IPv4 only.
+    sudo ufw allow in proto tcp from any to any port 53
+    sudo ufw allow in proto udp from any to any port 53
+    sudo ufw allow out proto tcp from any to any port 53
+    sudo ufw allow out proto udp from any to any port 53
+
+    echo -e "[*] UFW installed and configured successfully.\n"
+    echo "[*] Which additional ports should be opened for incoming traffic?"
+    echo "      WARNING: Do NOT forget to add 22/SSH if needed - please don't accidentally lock yourself out!"
     ports=$(get_input_list)
     for port in $ports; do
         sudo ufw allow "$port"
         echo "[*] Rule added for port $port"
     done
-    # Example: explicitly allow DNS outbound traffic on port 53
-    sudo ufw allow out 53/tcp
-    sudo ufw allow out 53/udp
+
     sudo ufw logging on
     sudo ufw --force enable
 }
 
 ########################################################################
 # FUNCTION: setup_custom_iptables
-# This function writes the DSU dual-mode iptables/awk script to a temporary
-# file, runs it, and then optionally enters extended iptables management.
+# Configures iptables with a strict outbound deny policy (except DNS) for IPv4.
 ########################################################################
 function setup_custom_iptables {
     print_banner "Configuring iptables (Custom Script)"
     
-    # Reset iptables so that the new rules will be the only ones in effect.
+    # Flush existing iptables rules.
     reset_iptables
-    # Set default OUTPUT policy to DROP (restrict outbound traffic)
+
+    # Set default policies: drop outbound and (optionally) inbound traffic.
     sudo iptables -P OUTPUT DROP
+    sudo iptables -P INPUT DROP
+
+    # Allow established/related connections so that traffic initiated by allowed connections works.
+    sudo iptables -A OUTPUT -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT
+    sudo iptables -A INPUT -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT
+
+    # Explicitly allow DNS (port 53) traffic (both TCP and UDP) for IPv4.
+    sudo iptables -A OUTPUT -p tcp --dport 53 -j ACCEPT
+    sudo iptables -A OUTPUT -p udp --dport 53 -j ACCEPT
+    sudo iptables -A INPUT -p tcp --sport 53 -j ACCEPT
+    sudo iptables -A INPUT -p udp --sport 53 -j ACCEPT
 
     echo "Select your DNS server option:"
     echo "  1) Use Cloudflare DNS servers (1.1.1.1, 1.0.0.1)"
@@ -451,10 +474,10 @@ function setup_custom_iptables {
         dns_value="192.168.XXX.1 192.168.XXX.2"
     fi
 
-    # Create a temporary file for the DSU script
+    # Create a temporary file for the DSU dual-mode iptables/awk script.
     tmpfile=$(mktemp /tmp/iptables_script.XXXXXX)
     
-    # Write the dual-mode script into the temporary file using a placeholder for DNS_SERVERS
+    # Write the DSU script into the temporary file (placeholder DNS_SERVERS will be replaced).
     cat <<'EOF' > "$tmpfile"
 #!/bin/bash
 # This is a dual-mode script: valid as both a Bash script and an AWK script.
@@ -660,18 +683,18 @@ $2 in OUTBOUND_CONNECTION_TYPES_ARRAY {
 }
 EOF
 
-    # Replace the placeholder with the chosen DNS value
+    # Replace the placeholder with the chosen DNS value.
     sed -i "s/##DNS_SERVERS##/$dns_value/" "$tmpfile"
     
-    # Make the temporary script executable and run it with sudo
+    # Make the temporary script executable and run it with sudo.
     chmod +x "$tmpfile"
     sudo "$tmpfile"
     rm "$tmpfile"
     
-    # Save the iptables rules persistently
+    # Save the iptables rules persistently.
     save_iptables_rules
 
-    # Ask whether to enter additional (extended) iptables management
+    # Ask whether to enter additional (extended) iptables management.
     ext_choice=$(get_input_string "Would you like to add any additional iptables rules? (y/N): ")
     if [[ "$ext_choice" == "y" || "$ext_choice" == "Y" ]]; then
         extended_iptables
