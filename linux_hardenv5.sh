@@ -15,6 +15,7 @@ sudo_group=""
 ccdc_users=( "ccdcuser1" "ccdcuser2" )
 debug="false"
 IPTABLES_BACKUP="/tmp/iptables_backup.rules"
+UFW_BACKUP="/tmp/ufw_backup.rules"
 #####################################################
 
 ##################### FUNCTIONS #####################
@@ -405,6 +406,35 @@ function restore_iptables_rules {
         sudo iptables-restore < "$IPTABLES_BACKUP"
     else
         echo "[X] No iptables backup file found."
+    fi
+}
+function backup_current_iptables_rules {
+    echo "[*] Backing up current iptables rules to $IPTABLES_BACKUP"
+    sudo iptables-save > "$IPTABLES_BACKUP"
+}
+
+function restore_iptables_rules {
+    if [ -f "$IPTABLES_BACKUP" ]; then
+        echo "[*] Restoring iptables rules from $IPTABLES_BACKUP"
+        sudo iptables-restore < "$IPTABLES_BACKUP"
+    else
+        echo "[X] No iptables backup file found."
+    fi
+}
+
+function backup_current_ufw_rules {
+    echo "[*] Backing up current UFW rules to $UFW_BACKUP"
+    sudo cp /etc/ufw/user.rules "$UFW_BACKUP"
+}
+
+function restore_ufw_rules {
+    if [ -f "$UFW_BACKUP" ]; then
+        echo "[*] Restoring UFW rules from $UFW_BACKUP"
+        sudo ufw reset
+        sudo cp "$UFW_BACKUP" /etc/ufw/user.rules
+        sudo ufw reload
+    else
+        echo "[X] No UFW backup file found."
     fi
 }
 
@@ -1454,10 +1484,9 @@ function disable_unnecessary_services {
 }
 
 # Function to set up a cronjob that monitors open ports and re-applies iptables rules.
-function setup_firewall_maintenance_cronjob {
-    print_banner "Setting Up Firewall Maintenance Cronjob"
-    # Create a script that re-applies rules for open ports
-    script_file="/usr/local/sbin/firewall_maintain.sh"
+function setup_firewall_maintenance_cronjob_iptables {
+    print_banner "Setting Up iptables Maintenance Cronjob"
+    local script_file="/usr/local/sbin/firewall_maintain.sh"
     sudo bash -c "cat > $script_file" <<'EOF'
 #!/bin/bash
 open_ports=$(ss -lnt | awk 'NR>1 {print $4}' | awk -F':' '{print $NF}' | sort -u)
@@ -1466,12 +1495,41 @@ for port in $open_ports; do
     iptables -C INPUT -p tcp --dport $port -j ACCEPT 2>/dev/null || iptables -A INPUT -p tcp --dport $port -j ACCEPT
 done
 EOF
-    sudo chmod +x $script_file
-    cron_file="/etc/cron.d/firewall_maintenance"
+    sudo chmod +x "$script_file"
+    local cron_file="/etc/cron.d/firewall_maintenance"
     sudo bash -c "cat > $cron_file" <<EOF
 */5 * * * * root $script_file
 EOF
-    echo "[*] Firewall maintenance cron job created."
+    echo "[*] iptables maintenance cron job created."
+}
+
+function setup_firewall_maintenance_cronjob_ufw {
+    print_banner "Setting Up UFW Maintenance Cronjob"
+    backup_current_ufw_rules
+    local script_file="/usr/local/sbin/ufw_maintain.sh"
+    sudo bash -c "cat > $script_file" <<'EOF'
+#!/bin/bash
+if [ -f /tmp/ufw_backup.rules ]; then
+    ufw reset
+    cp /tmp/ufw_backup.rules /etc/ufw/user.rules
+    ufw reload
+fi
+EOF
+    sudo chmod +x "$script_file"
+    local cron_file="/etc/cron.d/ufw_maintenance"
+    sudo bash -c "cat > $cron_file" <<EOF
+*/5 * * * * root /usr/local/sbin/ufw_maintain.sh
+EOF
+    echo "[*] UFW maintenance cron job created."
+}
+
+
+function setup_firewall_maintenance_cronjob {
+    if command -v ufw &>/dev/null && sudo ufw status | grep -q "Status: active"; then
+        setup_firewall_maintenance_cronjob_ufw
+    else
+        setup_firewall_maintenance_cronjob_iptables
+    fi
 }
 
 # Function to set up a cronjob that clears the NAT table periodically.
@@ -1593,6 +1651,7 @@ function advanced_hardening {
         echo ""
     done
 }
+
 
 ##################### WEB HARDENING MENU FUNCTION #####################
 function show_web_hardening_menu {
