@@ -1652,7 +1652,6 @@ function advanced_hardening {
     done
 }
 
-
 ##################### WEB HARDENING MENU FUNCTION #####################
 function show_web_hardening_menu {
     print_banner "Web Hardening Menu"
