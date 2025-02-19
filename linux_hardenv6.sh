@@ -1,5 +1,6 @@
 #!/bin/bash
 # Usage: ./harden.sh [--debug]
+#
 # NOTE: Run this script as root.
 
 ###################### GLOBALS ######################
@@ -8,7 +9,7 @@ GITHUB_URL="https://raw.githubusercontent.com/BYU-CCDC/public-ccdc-resources/ref
 pm=""
 sudo_group=""
 ccdc_users=( "ccdcuser1" "ccdcuser2" )
-default_password="changeme"  # Fallback password for new users (if not prompted)
+default_password="changeme"  # Default password for non‑interactive user creation
 debug="false"
 IPTABLES_BACKUP="/tmp/iptables_backup.rules"
 UFW_BACKUP="/tmp/ufw_backup.rules"
@@ -16,16 +17,18 @@ UFW_BACKUP="/tmp/ufw_backup.rules"
 
 ##################### PRELIMINARY CHECKS #####################
 if [ "$EUID" -ne 0 ]; then
-    echo "[X] Please run this script as root (or via sudo)."
+    echo "[X] Please run this script as root."
     exit 1
 fi
 
 ##################### UTILITY FUNCTIONS #####################
 # Prints a banner with the given text.
 function print_banner {
-    echo -e "\n#######################################"
+    echo
+    echo "#######################################"
     echo "#   $1"
-    echo "#######################################\n"
+    echo "#######################################"
+    echo
 }
 
 # Prints debugging information if debug mode is enabled.
@@ -35,31 +38,31 @@ function debug_print {
         for arg in "$@"; do
             echo -n "$arg "
         done
-        echo -e "\n"
+        echo
     fi
 }
 
-# Read input (non-silent) with prompt.
+# Read a line of input with prompt.
 function get_input_string {
     local input
     read -r -p "$1" input
     echo "$input"
 }
 
-# Read input silently with prompt.
+# Read a line of input silently (for passwords) with prompt.
 function get_silent_input_string {
     local input
     read -r -s -p "$1" input
     echo "$input"
 }
 
-# Read multiple lines of input. User enters one per line; an empty line ends input.
+# Read multiple lines of input. User presses ENTER on a blank line to finish.
 function get_input_list {
     local input_list=()
     local cont="true"
-    while [ "$cont" == "true" ]; do
+    while [ "$cont" != "false" ]; do
         local input
-        input=$(get_input_string "Enter input (press ENTER on a blank line to finish): ")
+        input=$(get_input_string "Enter input (blank line to finish): ")
         if [ -z "$input" ]; then
             cont="false"
         else
@@ -69,7 +72,7 @@ function get_input_list {
     echo "${input_list[@]}"
 }
 
-# Append additional entries to an existing list of users.
+# Append additional entries to an existing list.
 function exclude_users {
     local users=("$@")
     local extra
@@ -80,15 +83,15 @@ function exclude_users {
     echo "${users[@]}"
 }
 
-# Get list of users by filtering /etc/passwd with an awk expression and excluding given names.
+# Get list of users (using an awk filter) excluding those that match a regex.
 function get_users {
     local awk_string="$1"
-    local excludes_regex
-    excludes_regex=$(sed -e 's/ /\\|/g' <<< "$2")
+    local exclude_regex
+    exclude_regex=$(sed -e 's/ /\\|/g' <<< "$2")
     local users
     users=$(awk -F ':' "$awk_string" /etc/passwd)
     local filtered
-    filtered=$(echo "$users" | grep -v -e "$excludes_regex")
+    filtered=$(echo "$users" | grep -v -e "$exclude_regex")
     readarray -t results <<< "$filtered"
     echo "${results[@]}"
 }
@@ -132,7 +135,7 @@ function install_prereqs {
 }
 
 ##################### PASSWORD & USER HELPERS #####################
-# Prompt for a password twice and set it for a given user.
+# Prompt twice for a password and then set it for the given user.
 function prompt_and_set_password {
     local user="$1"
     local password confirm
@@ -142,7 +145,7 @@ function prompt_and_set_password {
         confirm=$(get_silent_input_string "Confirm password for $user: ")
         echo
         if [ "$password" != "$confirm" ]; then
-            echo "[X] Passwords do not match. Please retry."
+            echo "Passwords do not match. Please retry."
         else
             echo "$user:$password" | chpasswd
             if [ $? -eq 0 ]; then
@@ -158,59 +161,70 @@ function prompt_and_set_password {
 ##################### USER MANAGEMENT FUNCTIONS #####################
 function change_root_password {
     print_banner "Changing Root Password"
-    prompt_and_set_password "root"
+    while true; do
+        local root_password root_password_confirm
+        root_password=$(get_silent_input_string "Enter new root password: ")
+        echo
+        root_password_confirm=$(get_silent_input_string "Confirm new root password: ")
+        echo
+        if [ "$root_password" != "$root_password_confirm" ]; then
+            echo "Passwords do not match. Please retry."
+        else
+            break
+        fi
+    done
+
+    if echo "root:$root_password" | chpasswd; then
+        echo "[*] Root password updated successfully."
+    else
+        echo "[X] ERROR: Failed to update root password."
+    fi
 }
 
 function create_ccdc_users {
-    print_banner "Creating/Updating CCDC Users"
+    print_banner "Creating/updating CCDC users"
     for user in "${ccdc_users[@]}"; do
         if id "$user" &>/dev/null; then
-            echo "[*] User $user exists."
-            local update_choice
-            update_choice=$(get_input_string "Update password for $user? (y/N): ")
-            if [[ "$update_choice" =~ ^[Yy]$ ]]; then
-                prompt_and_set_password "$user"
-            else
-                echo "[*] Skipping password update for $user."
-            fi
-            # Special case for ccdcuser2: ask to change root password.
-            if [ "$user" == "ccdcuser2" ]; then
-                local root_choice
-                root_choice=$(get_input_string "Would you like to change the root password? (y/N): ")
-                if [[ "$root_choice" =~ ^[Yy]$ ]]; then
-                    change_root_password
-                fi
-            fi
-        else
-            echo "[*] Creating user $user..."
-            # Prefer /bin/bash if available.
-            if [ -x "/bin/bash" ]; then
-                useradd -m -s /bin/bash "$user"
-            elif [ -x "/bin/sh" ]; then
-                useradd -m -s /bin/sh "$user"
-            else
-                echo "[X] ERROR: Could not find a valid shell."
-                exit 1
-            fi
-
-            # Set password for ccdcuser1 and ccdcuser2 interactively;
-            # for any other user, use the default password.
             if [[ "$user" == "ccdcuser1" || "$user" == "ccdcuser2" ]]; then
-                prompt_and_set_password "$user"
-                # For ccdcuser1, add to the sudo group.
-                if [ "$user" == "ccdcuser1" ]; then
-                    usermod -aG "$sudo_group" "$user"
+                echo "[*] $user already exists. Update password? (y/N): "
+                read -r update_choice
+                if [[ "$update_choice" =~ ^[Yy]$ ]]; then
+                    prompt_and_set_password "$user"
+                else
+                    echo "[*] Skipping password update for $user."
                 fi
-                # For ccdcuser2, offer root password change.
                 if [ "$user" == "ccdcuser2" ]; then
-                    local root_choice
-                    root_choice=$(get_input_string "Would you like to change the root password? (y/N): ")
+                    read -p "Change root password as well? (y/N): " root_choice
                     if [[ "$root_choice" =~ ^[Yy]$ ]]; then
                         change_root_password
                     fi
                 fi
             else
-                echo "$user:$default_password" | chpasswd && echo "[*] User $user created with default password."
+                echo "[*] $user already exists. Skipping..."
+            fi
+        else
+            echo "[*] Creating user $user..."
+            if [ -x "/bin/bash" ]; then
+                useradd -m -s /bin/bash "$user"
+            elif [ -x "/bin/sh" ]; then
+                useradd -m -s /bin/sh "$user"
+            else
+                echo "[X] ERROR: No valid shell found."
+                exit 1
+            fi
+            if [[ "$user" == "ccdcuser1" || "$user" == "ccdcuser2" ]]; then
+                prompt_and_set_password "$user"
+                if [ "$user" == "ccdcuser1" ]; then
+                    usermod -aG "$sudo_group" "$user"
+                fi
+                if [ "$user" == "ccdcuser2" ]; then
+                    read -p "Change root password? (y/N): " root_choice
+                    if [[ "$root_choice" =~ ^[Yy]$ ]]; then
+                        change_root_password
+                    fi
+                fi
+            else
+                echo "$user:$default_password" | chpasswd && echo "[*] $user created with default password."
             fi
         fi
         echo
@@ -218,33 +232,31 @@ function create_ccdc_users {
 }
 
 function change_passwords {
-    print_banner "Changing Passwords for All Users"
+    print_banner "Changing Passwords for Users"
     local exclusions=("root" "${ccdc_users[@]}")
     echo "[*] Excluded users: ${exclusions[*]}"
-    local opt
-    opt=$(get_input_string "Exclude any additional users? (y/N): ")
-    if [[ "$opt" =~ ^[Yy]$ ]]; then
+    local option
+    option=$(get_input_string "Exclude additional users? (y/N): ")
+    if [[ "$option" =~ ^[Yy]$ ]]; then
         exclusions=($(exclude_users "${exclusions[@]}"))
     fi
-
     local targets
     targets=$(get_users '$1 != "nobody" {print $1}' "${exclusions[*]}")
     echo "[*] Changing password for: $targets"
-    local new_pass confirm
+    local password confirm_password
     while true; do
-        new_pass=$(get_silent_input_string "Enter new password for target users: ")
+        password=$(get_silent_input_string "Enter new password for target users: ")
         echo
-        confirm=$(get_silent_input_string "Confirm password: ")
+        confirm_password=$(get_silent_input_string "Confirm new password: ")
         echo
-        if [ "$new_pass" != "$confirm" ]; then
-            echo "[X] Passwords do not match. Try again."
+        if [ "$password" != "$confirm_password" ]; then
+            echo "Passwords do not match. Retry."
         else
             break
         fi
     done
-
     for user in $targets; do
-        echo "$user:$new_pass" | chpasswd && echo "[*] Password changed for $user" || echo "[X] Failed for $user"
+        echo "$user:$password" | chpasswd && echo "[*] Password changed for $user" || echo "[X] Failed to change password for $user"
     done
 }
 
@@ -252,19 +264,24 @@ function disable_users {
     print_banner "Disabling User Accounts"
     local exclusions=("${ccdc_users[@]}" "root")
     echo "[*] Excluded users: ${exclusions[*]}"
-    local opt
-    opt=$(get_input_string "Exclude any additional users? (y/N): ")
-    if [[ "$opt" =~ ^[Yy]$ ]]; then
+    local option
+    option=$(get_input_string "Exclude additional users? (y/N): ")
+    if [[ "$option" =~ ^[Yy]$ ]]; then
         exclusions=($(exclude_users "${exclusions[@]}"))
     fi
     local targets
     targets=$(get_users '/\/(bash|sh|ash|zsh)$/{print $1}' "${exclusions[*]}")
+    echo "[*] Locking accounts and setting shell to nologin..."
     for user in $targets; do
-        usermod -L "$user" && echo "[*] Account for $user locked."
-        if chsh -s /usr/sbin/nologin "$user"; then
-            echo "[*] Login shell for $user set to nologin."
+        if usermod -L "$user"; then
+            echo "[*] Locked account for $user."
+            if chsh -s /usr/sbin/nologin "$user"; then
+                echo "[*] Set nologin shell for $user."
+            else
+                echo "[X] Failed to set nologin for $user."
+            fi
         else
-            echo "[X] Failed to set nologin for $user."
+            echo "[X] Failed to lock account for $user."
         fi
     done
 }
@@ -272,23 +289,26 @@ function disable_users {
 function remove_sudoers {
     print_banner "Removing Users from Sudo Group"
     local exclusions=("ccdcuser1")
-    echo "[*] Excluded from removal: ${exclusions[*]}"
-    local opt
-    opt=$(get_input_string "Exclude additional users? (y/N): ")
-    if [[ "$opt" =~ ^[Yy]$ ]]; then
+    echo "[*] Excluded: ${exclusions[*]}"
+    local option
+    option=$(get_input_string "Exclude additional users? (y/N): ")
+    if [[ "$option" =~ ^[Yy]$ ]]; then
         exclusions=($(exclude_users "${exclusions[@]}"))
     fi
     local targets
     targets=$(get_users '{print $1}' "${exclusions[*]}")
+    echo "[*] Removing sudo group membership..."
     for user in $targets; do
-        if id -nG "$user" | grep -qw "$sudo_group"; then
-            gpasswd -d "$user" "$sudo_group" && echo "[*] Removed $user from $sudo_group."
+        if groups "$user" | grep -qw "$sudo_group"; then
+            gpasswd -d "$user" "$sudo_group"
+            echo "[*] Removed $user from $sudo_group."
         fi
     done
 }
 
 function audit_running_services {
     print_banner "Auditing Running Services (Listening Ports)"
+    echo "[*] Listing TCP/UDP listening ports:"
     ss -tuln
 }
 
@@ -302,48 +322,49 @@ function disable_other_firewalls {
     fi
 }
 
+# Backup current iptables rules persistently based on OS.
 function backup_current_iptables_rules {
-    # Save rules persistently based on OS.
     if grep -qi 'fedora\|centos\|rhel' /etc/os-release; then
-        iptables-save > /etc/sysconfig/iptables && echo "[*] Iptables saved to /etc/sysconfig/iptables"
+        iptables-save | tee /etc/sysconfig/iptables > /dev/null
+        echo "[*] Iptables rules saved to /etc/sysconfig/iptables"
     elif grep -qi 'debian\|ubuntu' /etc/os-release; then
         if [ -f /etc/iptables/rules.v4 ]; then
-            iptables-save > /etc/iptables/rules.v4 && echo "[*] Iptables saved to /etc/iptables/rules.v4"
+            iptables-save | tee /etc/iptables/rules.v4 > /dev/null
+            echo "[*] Iptables rules saved to /etc/iptables/rules.v4"
         elif command -v netfilter-persistent &>/dev/null; then
-            netfilter-persistent save && echo "[*] Iptables saved via netfilter-persistent"
+            netfilter-persistent save
+            echo "[*] Iptables rules saved via netfilter-persistent"
         else
             echo "[!] Warning: Iptables persistent saving not configured."
         fi
     else
-        echo "[*] Unknown OS. Save iptables manually if needed."
+        echo "[*] Unknown OS; please save iptables rules manually if needed."
     fi
     iptables-save > "$IPTABLES_BACKUP"
 }
 
 function restore_iptables_rules {
     if [ -f "$IPTABLES_BACKUP" ]; then
-        iptables-restore < "$IPTABLES_BACKUP" && echo "[*] Iptables rules restored."
+        echo "[*] Restoring iptables rules from $IPTABLES_BACKUP"
+        iptables-restore < "$IPTABLES_BACKUP"
     else
-        echo "[X] No iptables backup found."
+        echo "[X] No iptables backup file found."
     fi
 }
 
 function backup_current_ufw_rules {
-    if [ -f /etc/ufw/user.rules ]; then
-        cp /etc/ufw/user.rules "$UFW_BACKUP" && echo "[*] UFW rules backed up to $UFW_BACKUP"
-    else
-        echo "[X] UFW rules file not found."
-    fi
+    echo "[*] Backing up current UFW rules to $UFW_BACKUP"
+    cp /etc/ufw/user.rules "$UFW_BACKUP"
 }
 
 function restore_ufw_rules {
     if [ -f "$UFW_BACKUP" ]; then
+        echo "[*] Restoring UFW rules from $UFW_BACKUP"
         ufw reset
         cp "$UFW_BACKUP" /etc/ufw/user.rules
         ufw reload
-        echo "[*] UFW rules restored."
     else
-        echo "[X] No UFW backup found."
+        echo "[X] No UFW backup file found."
     fi
 }
 
@@ -358,12 +379,13 @@ function setup_ufw {
     ufw allow out on lo
     ufw allow out to any port 53 proto tcp
     ufw allow out to any port 53 proto udp
-    echo "[*] UFW configured with strict outbound deny (DNS allowed)."
-    echo "Enter additional incoming ports to open (one per line):"
+    echo "[*] UFW configured with strict outbound deny (except DNS)."
+    echo "WARNING: Ensure port 22 (SSH) is allowed if remote access is needed."
     local ports
     ports=$(get_input_list)
     for port in $ports; do
-        ufw allow "$port" && echo "[*] Allowed port $port"
+        ufw allow "$port"
+        echo "[*] Allowed port $port."
     done
     ufw logging on
     ufw --force enable
@@ -373,28 +395,32 @@ function setup_ufw {
 function ufw_disable_default_deny {
     print_banner "Temporarily Allow Outbound (UFW)"
     ufw default allow outgoing
+    echo "[*] UFW default outbound policy set to allow."
     backup_current_ufw_rules
 }
 
 function ufw_enable_default_deny {
-    print_banner "Reverting Outbound Policy (UFW)"
+    print_banner "Reapplying Default Deny Outbound (UFW)"
     ufw default deny outgoing
     ufw allow out on lo
     ufw allow out to any port 53 proto tcp
     ufw allow out to any port 53 proto udp
+    echo "[*] UFW default outbound policy set to deny."
     backup_current_ufw_rules
 }
 
 function reset_iptables {
-    print_banner "Resetting IPTables"
+    print_banner "Resetting IPTables Firewall"
+    echo "[*] Flushing all iptables rules..."
     iptables -F
     iptables -X
     iptables -Z
+    echo "[*] Setting default policies to ACCEPT..."
     iptables -P INPUT ACCEPT
     iptables -P FORWARD ACCEPT
     iptables -P OUTPUT ACCEPT
+    echo "[*] IPTables reset complete."
     backup_current_iptables_rules
-    echo "[*] IPTables reset."
 }
 
 function setup_custom_iptables {
@@ -411,17 +437,15 @@ function setup_custom_iptables {
     echo "Select DNS option:"
     echo "  1) Cloudflare (1.1.1.1, 1.0.0.1)"
     echo "  2) Use default gateway"
-    echo "  3) Use default DNS (192.168.XXX.1, 192.168.XXX.2)"
-    local dns_choice
-    dns_choice=$(get_input_string "Choice [1-3]: ")
-    local dns_value
+    echo "  3) Use fallback DNS (192.168.XXX.1, 192.168.XXX.2)"
+    local dns_choice dns_value default_gateway
+    dns_choice=$(get_input_string "Enter your choice [1-3]: ")
     if [ "$dns_choice" == "1" ]; then
         dns_value="1.1.1.1 1.0.0.1"
     elif [ "$dns_choice" == "2" ]; then
-        local default_gateway
         default_gateway=$(ip route | awk '/default/ {print $3; exit}')
         if [ -z "$default_gateway" ]; then
-            echo "[X] Default gateway not found. Falling back."
+            echo "[X] Default gateway not found. Using fallback."
             dns_value="192.168.XXX.1 192.168.XXX.2"
         else
             dns_value="$default_gateway"
@@ -440,20 +464,24 @@ function setup_custom_iptables {
 
 function custom_iptables_manual_rules {
     print_banner "Add Manual Inbound IPTables Rule"
+    echo "[*] Enter inbound TCP port numbers (one per line, blank to finish):"
     local ports
     ports=$(get_input_list)
     for port in $ports; do
-        iptables -A INPUT -p tcp --dport "$port" -j ACCEPT && echo "[*] Allowed inbound port $port"
+        iptables -A INPUT -p tcp --dport "$port" -j ACCEPT
+        echo "[*] Added inbound rule for port $port."
         backup_current_iptables_rules
     done
 }
 
 function custom_iptables_manual_outbound_rules {
     print_banner "Add Manual Outbound IPTables Rule"
+    echo "[*] Enter outbound TCP port numbers (one per line, blank to finish):"
     local ports
     ports=$(get_input_list)
     for port in $ports; do
-        iptables -A OUTPUT -p tcp --dport "$port" -j ACCEPT && echo "[*] Allowed outbound port $port"
+        iptables -A OUTPUT -p tcp --dport "$port" -j ACCEPT
+        echo "[*] Added outbound rule for port $port."
         backup_current_iptables_rules
     done
 }
@@ -463,7 +491,7 @@ function iptables_disable_default_deny {
     backup_current_iptables_rules
     iptables -P OUTPUT ACCEPT
     iptables -P INPUT ACCEPT
-    echo "[*] IPTables policies set to ACCEPT."
+    echo "[*] IPTables policies temporarily set to ACCEPT."
 }
 
 function iptables_enable_default_deny {
@@ -471,40 +499,44 @@ function iptables_enable_default_deny {
     backup_current_iptables_rules
     iptables -P OUTPUT DROP
     iptables -P INPUT DROP
-    echo "[*] IPTables policies set to DROP."
+    echo "[*] IPTables policies set back to DROP."
 }
 
 function extended_iptables {
     while true; do
         print_banner "Extended IPTables Management"
-        echo " 1) Add Outbound ACCEPT rule"
-        echo " 2) Add Inbound ACCEPT rule"
-        echo " 3) Add Outbound DROP rule"
-        echo " 4) Add Inbound DROP rule"
-        echo " 5) Show all rules"
-        echo " 6) Reset firewall"
-        echo " 7) Exit extended management"
+        echo "  1) Add Outbound ACCEPT rule"
+        echo "  2) Add Inbound ACCEPT rule"
+        echo "  3) Add Outbound DROP rule"
+        echo "  4) Add Inbound DROP rule"
+        echo "  5) Show All Rules"
+        echo "  6) Reset Firewall"
+        echo "  7) Exit Extended Management"
         local choice
         read -p "Enter your choice [1-7]: " choice
         case $choice in
             1)
-                read -p "Enter outbound port number: " port
-                iptables -A OUTPUT -p tcp --dport "$port" -j ACCEPT && echo "[*] Added outbound ACCEPT rule for port $port"
+                read -p "Enter outbound port: " port
+                iptables -A OUTPUT -p tcp --dport "$port" -j ACCEPT
+                echo "Outbound ACCEPT rule added for port $port."
                 backup_current_iptables_rules
                 ;;
             2)
-                read -p "Enter inbound port number: " port
-                iptables -A INPUT -p tcp --dport "$port" -j ACCEPT && echo "[*] Added inbound ACCEPT rule for port $port"
+                read -p "Enter inbound port: " port
+                iptables -A INPUT -p tcp --dport "$port" -j ACCEPT
+                echo "Inbound ACCEPT rule added for port $port."
                 backup_current_iptables_rules
                 ;;
             3)
-                read -p "Enter outbound port number to DROP: " port
-                iptables -A OUTPUT -p tcp --dport "$port" -j DROP && echo "[*] Added outbound DROP rule for port $port"
+                read -p "Enter outbound port to DROP: " port
+                iptables -A OUTPUT -p tcp --dport "$port" -j DROP
+                echo "Outbound DROP rule added for port $port."
                 backup_current_iptables_rules
                 ;;
             4)
-                read -p "Enter inbound port number to DROP: " port
-                iptables -A INPUT -p tcp --dport "$port" -j DROP && echo "[*] Added inbound DROP rule for port $port"
+                read -p "Enter inbound port to DROP: " port
+                iptables -A INPUT -p tcp --dport "$port" -j DROP
+                echo "Inbound DROP rule added for port $port."
                 backup_current_iptables_rules
                 ;;
             5)
@@ -515,120 +547,15 @@ function extended_iptables {
                 backup_current_iptables_rules
                 ;;
             7)
-                echo "[*] Exiting extended IPTables management."
+                echo "Exiting Extended IPTables Management."
                 break
                 ;;
             *)
-                echo "[X] Invalid option."
+                echo "Invalid option selected."
                 ;;
         esac
-        echo
+        echo ""
     done
-}
-
-function firewall_configuration_menu {
-    detect_system_info
-    install_prereqs
-    disable_other_firewalls
-    audit_running_services
-    read -p "Press ENTER to continue to firewall configuration..." dummy
-
-    print_banner "Firewall Configuration Menu"
-    echo "Select firewall type:"
-    echo " 1) UFW"
-    echo " 2) IPTables"
-    local fw_type
-    read -p "Enter your choice [1-2]: " fw_type
-    echo
-    case $fw_type in
-        1)
-            while true; do
-                print_banner "UFW Menu"
-                echo " 1) Setup UFW"
-                echo " 2) Add inbound allow rule"
-                echo " 3) Add outbound allow rule"
-                echo " 4) Show UFW rules"
-                echo " 5) Reset UFW"
-                echo " 6) Show running services"
-                echo " 7) Temporarily allow outbound (disable default deny)"
-                echo " 8) Reinstate default deny for outbound"
-                echo " 9) Exit UFW menu"
-                local ufw_choice
-                read -p "Enter your choice [1-9]: " ufw_choice
-                echo
-                case $ufw_choice in
-                    1) setup_ufw ;;
-                    2)
-                        echo "Enter inbound ports to allow:"
-                        local ports; ports=$(get_input_list)
-                        for port in $ports; do
-                            ufw allow in "$port" && echo "[*] Allowed inbound port $port"
-                        done
-                        ;;
-                    3)
-                        echo "Enter outbound ports to allow:"
-                        local ports; ports=$(get_input_list)
-                        for port in $ports; do
-                            ufw allow out "$port" && echo "[*] Allowed outbound port $port"
-                        done
-                        ;;
-                    4) ufw status numbered ;;
-                    5) ufw --force reset && echo "[*] UFW reset." ;;
-                    6) audit_running_services ;;
-                    7) ufw_disable_default_deny ;;
-                    8) ufw_enable_default_deny ;;
-                    9) break ;;
-                    *) echo "[X] Invalid option." ;;
-                esac
-                echo
-            done
-            ;;
-        2)
-            while true; do
-                print_banner "IPTables Menu"
-                echo " 1) Setup IPTables"
-                echo " 2) Add outbound allow rule"
-                echo " 3) Add inbound allow rule"
-                echo " 4) Add outbound deny rule"
-                echo " 5) Add inbound deny rule"
-                echo " 6) Show IPTables rules"
-                echo " 7) Reset IPTables"
-                echo " 8) Show running services"
-                echo " 9) Temporarily allow all (disable default deny)"
-                echo " 10) Reinstate default deny"
-                echo " 11) Exit IPTables menu"
-                local ipt_choice
-                read -p "Enter your choice [1-11]: " ipt_choice
-                echo
-                case $ipt_choice in
-                    1) setup_custom_iptables ;;
-                    2) custom_iptables_manual_outbound_rules ;;
-                    3) custom_iptables_manual_rules ;;
-                    4)
-                        read -p "Enter outbound port to deny: " port
-                        iptables -A OUTPUT -p tcp --dport "$port" -j DROP && echo "[*] Denied outbound port $port"
-                        backup_current_iptables_rules
-                        ;;
-                    5)
-                        read -p "Enter inbound port to deny: " port
-                        iptables -A INPUT -p tcp --dport "$port" -j DROP && echo "[*] Denied inbound port $port"
-                        backup_current_iptables_rules
-                        ;;
-                    6) iptables -L -n -v ;;
-                    7) reset_iptables ;;
-                    8) audit_running_services ;;
-                    9) iptables_disable_default_deny ;;
-                    10) iptables_enable_default_deny ;;
-                    11) break ;;
-                    *) echo "[X] Invalid option." ;;
-                esac
-                echo
-            done
-            ;;
-        *)
-            echo "[X] Invalid firewall selection."
-            ;;
-    esac
 }
 
 ##################### BACKUP FUNCTIONS #####################
@@ -645,12 +572,11 @@ function backup_directories {
 
     local backup_list=()
     if [ ${#detected_dirs[@]} -gt 0 ]; then
-        echo "[*] Detected directories:"
+        echo "[*] Detected critical directories:"
         for d in "${detected_dirs[@]}"; do
             echo "   $d"
         done
-        local detected_choice
-        detected_choice=$(get_input_string "Back these up? (y/N): ")
+        read -p "Back these up? (y/N): " detected_choice
         if [[ "$detected_choice" =~ ^[Yy]$ ]]; then
             backup_list=("${detected_dirs[@]}")
         fi
@@ -658,18 +584,18 @@ function backup_directories {
         echo "[*] No critical directories detected."
     fi
 
-    local additional_choice
-    additional_choice=$(get_input_string "Backup any additional files/directories? (y/N): ")
+    read -p "Backup additional files/directories? (y/N): " additional_choice
     if [[ "$additional_choice" =~ ^[Yy]$ ]]; then
-        echo "[*] Enter additional paths (one per line):"
-        local additional_dirs; additional_dirs=$(get_input_list)
+        echo "[*] Enter additional paths (one per line, blank to finish):"
+        local additional_dirs
+        additional_dirs=$(get_input_list)
         for item in $additional_dirs; do
             local path
             path=$(readlink -f "$item")
             if [ -e "$path" ]; then
                 backup_list+=("$path")
             else
-                echo "[X] $path does not exist."
+                echo "[X] ERROR: $path does not exist."
             fi
         done
     fi
@@ -686,13 +612,13 @@ function backup_directories {
             [[ "$backup_name" != *.zip ]] && backup_name="${backup_name}.zip"
             break
         fi
-        echo "[X] Backup name cannot be blank."
+        echo "[X] ERROR: Backup name cannot be blank."
     done
 
     echo "[*] Creating archive..."
     zip -r "$backup_name" "${backup_list[@]}" >/dev/null 2>&1
     if [ $? -ne 0 ]; then
-        echo "[X] Archive creation failed."
+        echo "[X] ERROR: Archive creation failed."
         return
     fi
     echo "[*] Archive created: $backup_name"
@@ -705,7 +631,7 @@ function backup_directories {
         enc_confirm=$(get_silent_input_string "Confirm encryption password: ")
         echo
         if [ "$enc_password" != "$enc_confirm" ]; then
-            echo "[X] Passwords do not match. Retry."
+            echo "Passwords do not match. Retry."
         else
             break
         fi
@@ -714,7 +640,7 @@ function backup_directories {
     local enc_archive="${backup_name}.enc"
     openssl enc -aes-256-cbc -salt -in "$backup_name" -out "$enc_archive" -k "$enc_password"
     if [ $? -ne 0 ]; then
-        echo "[X] Encryption failed."
+        echo "[X] ERROR: Encryption failed."
         return
     fi
     echo "[*] Encrypted archive created: $enc_archive"
@@ -726,14 +652,14 @@ function backup_directories {
         if [ -d "$storage_dir" ]; then
             break
         else
-            echo "[*] Directory does not exist. Creating..."
-            mkdir -p "$storage_dir" && break || echo "[X] Failed to create directory."
+            echo "[*] Directory does not exist. Creating it..."
+            mkdir -p "$storage_dir" && break || echo "[X] ERROR: Could not create directory."
         fi
     done
 
     mv "$enc_archive" "$storage_dir/" && echo "[*] Encrypted archive moved to $storage_dir"
     rm -f "$backup_name"
-    echo "[*] Backup complete."
+    echo "[*] Backup complete. Only the encrypted archive remains."
 }
 
 function unencrypt_backups {
@@ -743,7 +669,19 @@ function unencrypt_backups {
         encrypted_file=$(get_input_string "Enter path to encrypted backup: ")
         encrypted_file=$(readlink -f "$encrypted_file")
         if [ ! -f "$encrypted_file" ]; then
-            echo "[X] File not found. Please try again."
+            echo "[X] ERROR: File '$encrypted_file' not found."
+            local dir base similar_files
+            dir=$(dirname "$encrypted_file")
+            base=$(basename "$encrypted_file")
+            echo "[*] Searching for similar files in '$dir'..."
+            similar_files=$(find "$dir" -maxdepth 1 -iname "*${base}*" 2>/dev/null)
+            if [ -n "$similar_files" ]; then
+                echo "[*] Similar files found:"
+                echo "$similar_files"
+            else
+                echo "[*] No similar files found."
+            fi
+            echo "[*] Please try again."
         else
             break
         fi
@@ -756,7 +694,7 @@ function unencrypt_backups {
         dec_confirm=$(get_silent_input_string "Confirm decryption password: ")
         echo
         if [ "$dec_password" != "$dec_confirm" ]; then
-            echo "[X] Passwords do not match."
+            echo "Passwords do not match. Retry."
         else
             break
         fi
@@ -765,14 +703,14 @@ function unencrypt_backups {
     local temp_output="decrypted_backup.zip"
     openssl enc -d -aes-256-cbc -in "$encrypted_file" -out "$temp_output" -k "$dec_password"
     if [ $? -ne 0 ]; then
-        echo "[X] Decryption failed. Check password."
+        echo "[X] ERROR: Decryption failed. Check your password."
         rm -f "$temp_output"
         return
     fi
 
     echo "[*] Decryption successful: $temp_output"
     local extract_choice
-    extract_choice=$(get_input_string "Extract the archive? (y/N): ")
+    read -p "Extract the decrypted archive? (y/N): " extract_choice
     if [[ "$extract_choice" =~ ^[Yy]$ ]]; then
         local extract_dir
         extract_dir=$(get_input_string "Enter extraction directory: ")
@@ -801,41 +739,41 @@ function backups {
     esac
 }
 
-##################### SPLUNK & WEB HARDENING FUNCTIONS #####################
 function setup_splunk {
     print_banner "Installing Splunk"
     local indexer_ip
-    indexer_ip=$(get_input_string "Enter Splunk forwarder server IP: ")
+    indexer_ip=$(get_input_string "Enter Splunk forward server IP: ")
     wget "$GITHUB_URL/splunk/splunk.sh" --no-check-certificate
     chmod +x splunk.sh
     ./splunk.sh -f "$indexer_ip"
 }
 
+##################### WEB HARDENING FUNCTIONS #####################
 function backup_databases {
-    print_banner "Backing Up Databases (MySQL/MariaDB)"
+    print_banner "Backing Up Databases"
     if service mysql status &>/dev/null; then
-        echo "[+] MySQL/MariaDB is active."
-        mysql -u root -e "quit" &>/dev/null
+        echo "[+] MySQL/MariaDB is active!"
+        mysql -u root -e "quit" 2>/dev/null
         if [ $? -eq 0 ]; then
-            echo "[!] Empty root password detected. Backing up databases..."
+            echo "[!] Empty root password detected for MySQL!"
+            echo "[*] Backing up all databases..."
             mysqldump --all-databases > backup.sql
             local ns pass
             ns=$(date +%N)
             pass=$(echo "${ns}$RANDOM" | sha256sum | cut -d" " -f1)
-            echo "[+] Backup complete. Key for dump: $pass"
+            echo "[+] Database backup complete. Dump key: $pass"
             gpg -c --pinentry-mode=loopback --passphrase "$pass" backup.sql
             rm backup.sql
         fi
     fi
 
     if service postgresql status &>/dev/null; then
-        echo "[+] PostgreSQL is active."
+        echo "[+] PostgreSQL is active!"
     fi
 }
 
 function secure_php_ini {
-    print_banner "Securing PHP Configuration"
-    local ini
+    print_banner "Securing php.ini Files"
     for ini in $(find / -name "php.ini" 2>/dev/null); do
         echo "[+] Updating $ini"
         cat <<EOF >> "$ini"
@@ -872,7 +810,7 @@ function secure_ssh {
         return
     fi
 
-    # Recommended hardening: disable root login and require key authentication.
+    # Recommended settings: disable root login and require public-key authentication.
     sed -i 's/^#*PermitRootLogin.*/PermitRootLogin no/' "$config_file"
     sed -i 's/^#*PubkeyAuthentication.*/PubkeyAuthentication yes/' "$config_file"
     sed -i 's/^#*UseDNS.*/UseDNS no/' "$config_file"
@@ -894,24 +832,27 @@ function secure_ssh {
 
 function install_modsecurity {
     print_banner "Installing ModSecurity"
-    # Temporarily allow outbound traffic for package installation.
-    iptables -P OUTPUT ACCEPT
-    if command -v yum &>/dev/null; then
-        echo "ModSecurity installation for RHEL-based systems not implemented."
-    elif command -v apt-get &>/dev/null; then
+    local ipt
+    ipt=$(command -v iptables || command -v /sbin/iptables || command -v /usr/sbin/iptables)
+    $ipt -P OUTPUT ACCEPT
+
+    if command -v yum >/dev/null; then
+        echo "RHEL-based ModSecurity installation not implemented."
+    elif command -v apt-get >/dev/null; then
         apt-get update
         apt-get -y install libapache2-mod-security2
         a2enmod security2
         cp /etc/modsecurity/modsecurity.conf-recommended /etc/modsecurity/modsecurity.conf
         sed -i 's/SecRuleEngine DetectionOnly/SecRuleEngine On/g' /etc/modsecurity/modsecurity.conf
         systemctl restart apache2
-    elif command -v apk &>/dev/null; then
+    elif command -v apk >/dev/null; then
         echo "Alpine-based ModSecurity installation not implemented."
     else
         echo "Unsupported distribution for ModSecurity installation."
         exit 1
     fi
-    iptables -P OUTPUT DROP
+
+    $ipt -P OUTPUT DROP
 }
 
 function remove_profiles {
@@ -925,18 +866,21 @@ function remove_profiles {
 
 function fix_pam {
     print_banner "Fixing PAM Configuration"
-    iptables -P OUTPUT ACCEPT
-    if command -v yum &>/dev/null; then
-        if command -v authconfig &>/dev/null; then
+    local ipt
+    ipt=$(command -v iptables || command -v /sbin/iptables || command -v /usr/sbin/iptables)
+    $ipt -P OUTPUT ACCEPT
+
+    if command -v yum >/dev/null; then
+        if command -v authconfig >/dev/null; then
             authconfig --updateall
             yum -y reinstall pam
         else
-            echo "No authconfig found. Cannot fix PAM."
+            echo "No authconfig; cannot fix PAM."
         fi
-    elif command -v apt-get &>/dev/null; then
+    elif command -v apt-get >/dev/null; then
         DEBIAN_FRONTEND=noninteractive pam-auth-update --force
         apt-get -y --reinstall install libpam-runtime libpam-modules
-    elif command -v apk &>/dev/null; then
+    elif command -v apk >/dev/null; then
         if [ -d /etc/pam.d ]; then
             apk fix --purge linux-pam
             for file in $(find /etc/pam.d -name "*.apk-new" 2>/dev/null); do
@@ -945,14 +889,19 @@ function fix_pam {
         else
             echo "PAM not installed."
         fi
-    elif command -v pacman &>/dev/null; then
-        mv /etc/pam.d /etc/pam.d.backup
-        cp -R "$BACKUPDIR" /etc/pam.d
+    elif command -v pacman >/dev/null; then
+        if [ -z "$BACKUPDIR" ]; then
+            echo "No backup directory provided for PAM configs."
+        else
+            mv /etc/pam.d /etc/pam.d.backup
+            cp -R "$BACKUPDIR" /etc/pam.d
+        fi
         pacman -S pam --noconfirm
     else
-        echo "Unknown OS; PAM fix not applied."
+        echo "Unknown OS; not fixing PAM."
     fi
-    iptables -P OUTPUT DROP
+
+    $ipt -P OUTPUT DROP
 }
 
 function search_ssn {
@@ -960,21 +909,21 @@ function search_ssn {
     local rootdir="/home/"
     local ssn_pattern='[0-9]\{3\}-[0-9]\{2\}-[0-9]\{4\}'
     find "$rootdir" -type f \( -name "*.txt" -o -name "*.csv" \) -exec sh -c '
-        for file do
-            grep -Hn "$0" "$file" | while read -r line; do
-                echo "$file:SSN:$line"
-            done
+        file="$1"
+        pattern="$2"
+        grep -Hn "$pattern" "$file" | while read -r line; do
+            echo "$file:SSN:$line"
         done
-    ' "$ssn_pattern" {} +
+    ' sh '{}' "$ssn_pattern" \;
 }
 
 function remove_unused_packages {
     print_banner "Removing Unused Packages"
-    if command -v yum &>/dev/null; then
+    if command -v yum >/dev/null; then
         yum purge -y -q netcat nc gcc cmake make telnet
-    elif command -v apt-get &>/dev/null; then
+    elif command -v apt-get >/dev/null; then
         apt-get -y purge netcat nc gcc cmake make telnet
-    elif command -v apk &>/dev/null; then
+    elif command -v apk >/dev/null; then
         apk remove gcc make
     else
         echo "Unsupported package manager for removal."
@@ -990,7 +939,7 @@ function patch_vulnerabilities {
 }
 
 function check_permissions {
-    print_banner "Checking and Setting Critical Permissions"
+    print_banner "Checking Critical Permissions"
     chown root:root /etc/shadow /etc/passwd
     chmod 640 /etc/shadow
     chmod 644 /etc/passwd
@@ -1034,11 +983,12 @@ EOF
 function my_secure_sql_installation {
     print_banner "Running mysql_secure_installation"
     local sql_choice
-    sql_choice=$(get_input_string "Run mysql_secure_installation? (y/N): ")
+    read -p "Run mysql_secure_installation? (y/N): " sql_choice
     if [[ "$sql_choice" =~ ^[Yy]$ ]]; then
-        mysql_secure_installation
+         echo "[*] Running mysql_secure_installation..."
+         mysql_secure_installation
     else
-        echo "[*] Skipping mysql_secure_installation."
+         echo "[*] Skipping mysql_secure_installation."
     fi
 }
 
@@ -1046,8 +996,11 @@ function manage_web_immutability {
     print_banner "Manage Web Directory Immutability"
     local default_web_dirs=( "/etc/nginx" "/etc/apache2" "/usr/share/nginx" "/var/www" "/var/www/html" "/etc/lighttpd" "/etc/mysql" "/etc/postgresql" "/var/lib/apache2" "/var/lib/mysql" "/etc/redis" "/etc/phpMyAdmin" "/etc/php.d" )
     local detected_web_dirs=()
+    echo "[*] Scanning for critical web directories..."
     for dir in "${default_web_dirs[@]}"; do
-        [ -d "$dir" ] && detected_web_dirs+=("$dir")
+        if [ -d "$dir" ]; then
+            detected_web_dirs+=("$dir")
+        fi
     done
 
     if [ ${#detected_web_dirs[@]} -eq 0 ]; then
@@ -1060,18 +1013,18 @@ function manage_web_immutability {
         echo "    $d"
     done
 
-    local imm_choice
-    imm_choice=$(get_input_string "Set these directories to immutable? (y/N): ")
+    read -p "Set these directories to immutable? (y/N): " imm_choice
     if [[ "$imm_choice" =~ ^[Yy]$ ]]; then
         for d in "${detected_web_dirs[@]}"; do
-            chattr +i "$d" && echo "[*] Immutable flag set on $d"
+            chattr +i "$d"
+            echo "[*] Immutable flag set on $d"
         done
     else
-        local unimm_choice
-        unimm_choice=$(get_input_string "Remove immutable flag from these directories? (y/N): ")
+        read -p "Remove immutable flag from these directories? (y/N): " unimm_choice
         if [[ "$unimm_choice" =~ ^[Yy]$ ]]; then
             for d in "${detected_web_dirs[@]}"; do
-                chattr -i "$d" && echo "[*] Immutable flag removed from $d"
+                chattr -i "$d"
+                echo "[*] Immutable flag removed from $d"
             done
         else
             echo "[*] No changes made."
@@ -1094,16 +1047,16 @@ function setup_iptables_cronjob {
     local cron_file
     if grep -qi 'fedora\|centos\|rhel' /etc/os-release; then
         cron_file="/etc/cron.d/iptables_persistence"
-        cat > "$cron_file" <<EOF
-*/5 * * * * root iptables-save > /etc/sysconfig/iptables
+        bash -c "cat > $cron_file" <<EOF
+*/5 * * * * root /sbin/iptables-save > /etc/sysconfig/iptables
 EOF
-        echo "[*] Cron job created at $cron_file."
+        echo "[*] Cron job created at $cron_file for RHEL-based systems."
     elif grep -qi 'debian\|ubuntu' /etc/os-release; then
         cron_file="/etc/cron.d/iptables_persistence"
-        cat > "$cron_file" <<EOF
-*/5 * * * * root iptables-save > /etc/iptables/rules.v4
+        bash -c "cat > $cron_file" <<EOF
+*/5 * * * * root /sbin/iptables-save > /etc/iptables/rules.v4
 EOF
-        echo "[*] Cron job created at $cron_file."
+        echo "[*] Cron job created at $cron_file for Debian-based systems."
     else
         echo "[*] Unknown OS. Please set up iptables persistence manually."
     fi
@@ -1112,7 +1065,7 @@ EOF
 function disable_unnecessary_services {
     print_banner "Disabling Unnecessary Services"
     local disable_sshd
-    disable_sshd=$(get_input_string "Disable SSHD? (WARNING: may lock you out) (y/N): ")
+    read -p "Disable SSHD? (WARNING: may lock you out if remote) (y/N): " disable_sshd
     if [[ "$disable_sshd" =~ ^[Yy]$ ]]; then
         if systemctl is-active sshd &>/dev/null; then
             systemctl stop sshd
@@ -1123,7 +1076,7 @@ function disable_unnecessary_services {
         fi
     fi
     local disable_cockpit
-    disable_cockpit=$(get_input_string "Disable Cockpit? (y/N): ")
+    read -p "Disable Cockpit? (y/N): " disable_cockpit
     if [[ "$disable_cockpit" =~ ^[Yy]$ ]]; then
         if systemctl is-active cockpit &>/dev/null; then
             systemctl stop cockpit
@@ -1138,7 +1091,7 @@ function disable_unnecessary_services {
 function setup_firewall_maintenance_cronjob_iptables {
     print_banner "Setting Up IPTables Maintenance Cronjob"
     local script_file="/usr/local/sbin/firewall_maintain.sh"
-    cat > "$script_file" <<'EOF'
+    bash -c "cat > $script_file" <<'EOF'
 #!/bin/bash
 open_ports=$(ss -lnt | awk 'NR>1 {print $4}' | awk -F':' '{print $NF}' | sort -u)
 for port in $open_ports; do
@@ -1147,7 +1100,7 @@ done
 EOF
     chmod +x "$script_file"
     local cron_file="/etc/cron.d/firewall_maintenance"
-    cat > "$cron_file" <<EOF
+    bash -c "cat > $cron_file" <<EOF
 */5 * * * * root $script_file
 EOF
     echo "[*] IPTables maintenance cron job created."
@@ -1157,7 +1110,7 @@ function setup_firewall_maintenance_cronjob_ufw {
     print_banner "Setting Up UFW Maintenance Cronjob"
     backup_current_ufw_rules
     local script_file="/usr/local/sbin/ufw_maintain.sh"
-    cat > "$script_file" <<'EOF'
+    bash -c "cat > $script_file" <<'EOF'
 #!/bin/bash
 if [ -f /tmp/ufw_backup.rules ]; then
     ufw reset
@@ -1167,8 +1120,8 @@ fi
 EOF
     chmod +x "$script_file"
     local cron_file="/etc/cron.d/ufw_maintenance"
-    cat > "$cron_file" <<EOF
-*/5 * * * * root $script_file
+    bash -c "cat > $cron_file" <<EOF
+*/5 * * * * root /usr/local/sbin/ufw_maintain.sh
 EOF
     echo "[*] UFW maintenance cron job created."
 }
@@ -1184,10 +1137,10 @@ function setup_firewall_maintenance_cronjob {
 function setup_nat_clear_cronjob {
     print_banner "Setting Up NAT Table Clear Cronjob"
     local cron_file="/etc/cron.d/clear_nat_table"
-    cat > "$cron_file" <<EOF
-*/5 * * * * root iptables -t nat -F
+    bash -c "cat > $cron_file" <<EOF
+*/5 * * * * root /sbin/iptables -t nat -F
 EOF
-    echo "[*] NAT clear cron job created."
+    echo "[*] NAT table clear cron job created."
 }
 
 function setup_service_restart_cronjob {
@@ -1200,51 +1153,59 @@ function setup_service_restart_cronjob {
     elif systemctl is-active netfilter-persistent &>/dev/null; then
         detected_service="netfilter-persistent"
     else
-        echo "[*] No recognized firewall service detected."
+        echo "[*] No recognized firewall service detected automatically."
     fi
-
+    
     if [ -n "$detected_service" ]; then
+        echo "[*] Detected firewall service: $detected_service"
         local script_file="/usr/local/sbin/restart_${detected_service}.sh"
-        cat > "$script_file" <<EOF
+        bash -c "cat > $script_file" <<EOF
 #!/bin/bash
 systemctl restart $detected_service
 EOF
         chmod +x "$script_file"
         local cron_file="/etc/cron.d/restart_${detected_service}"
-        cat > "$cron_file" <<EOF
+        bash -c "cat > $cron_file" <<EOF
 */5 * * * * root $script_file
 EOF
         echo "[*] Cron job created to restart $detected_service every 5 minutes."
     fi
 
     local add_extra
-    add_extra=$(get_input_string "Add additional services to restart via cron? (y/N): ")
+    read -p "Add additional services to restart via cron? (y/N): " add_extra
     if [[ "$add_extra" =~ ^[Yy]$ ]]; then
         while true; do
             local extra_service
-            extra_service=$(get_input_string "Enter additional service name (or blank to finish): ")
+            read -p "Enter additional service name (or blank to finish): " extra_service
             [ -z "$extra_service" ] && break
-            local extra_script="/usr/local/sbin/restart_${extra_service}.sh"
-            cat > "$extra_script" <<EOF
+            local extra_script_file="/usr/local/sbin/restart_${extra_service}.sh"
+            bash -c "cat > $extra_script_file" <<EOF
 #!/bin/bash
 systemctl restart $extra_service
 EOF
-            chmod +x "$extra_script"
-            local extra_cron="/etc/cron.d/restart_${extra_service}"
-            cat > "$extra_cron" <<EOF
-*/5 * * * * root $extra_script
+            chmod +x "$extra_script_file"
+            local extra_cron_file="/etc/cron.d/restart_${extra_service}"
+            bash -c "cat > $extra_cron_file" <<EOF
+*/5 * * * * root $extra_script_file
 EOF
             echo "[*] Cron job created to restart $extra_service every 5 minutes."
         done
     fi
+    echo "[*] Service restart configuration complete."
 }
 
 function reset_advanced_hardening {
     print_banner "Resetting Advanced Hardening Configurations"
+    echo "[*] Removing iptables persistence cronjob..."
     rm -f /etc/cron.d/iptables_persistence
-    rm -f /etc/cron.d/firewall_maintenance /usr/local/sbin/firewall_maintain.sh
+    echo "[*] Removing firewall maintenance cronjob and script..."
+    rm -f /etc/cron.d/firewall_maintenance
+    rm -f /usr/local/sbin/firewall_maintain.sh
+    echo "[*] Removing NAT table clear cronjob..."
     rm -f /etc/cron.d/clear_nat_table
-    rm -f /etc/cron.d/restart_* /usr/local/sbin/restart_*
+    echo "[*] Removing service restart cronjobs and scripts..."
+    rm -f /etc/cron.d/restart_*
+    rm -f /usr/local/sbin/restart_*
     echo "[*] Advanced hardening configurations reset."
 }
 
@@ -1255,21 +1216,21 @@ function run_full_advanced_hardening {
     setup_firewall_maintenance_cronjob
     setup_nat_clear_cronjob
     setup_service_restart_cronjob
-    echo "[*] Advanced hardening process completed."
+    echo "[*] Full advanced hardening process completed."
 }
 
 function advanced_hardening {
+    local adv_choice
     while true; do
         print_banner "Advanced Hardening Menu"
-        echo " 1) Run full advanced hardening process"
-        echo " 2) Set up IPTables persistence cronjob"
-        echo " 3) Disable SSHD/Cockpit services"
-        echo " 4) Set up firewall maintenance cronjob"
-        echo " 5) Set up NAT table clear cronjob"
-        echo " 6) Set up service restart cronjob"
-        echo " 7) Reset advanced hardening configurations"
-        echo " 8) Exit advanced hardening menu"
-        local adv_choice
+        echo "  1) Run full advanced hardening process"
+        echo "  2) Set up iptables persistence cronjob"
+        echo "  3) Disable SSHD/Cockpit services"
+        echo "  4) Set up firewall maintenance cronjob"
+        echo "  5) Set up NAT table clear cronjob"
+        echo "  6) Set up service restart cronjob"
+        echo "  7) Reset advanced hardening configurations"
+        echo "  8) Exit advanced hardening menu"
         read -p "Enter your choice [1-8]: " adv_choice
         case $adv_choice in
             1) run_full_advanced_hardening ;;
@@ -1282,42 +1243,53 @@ function advanced_hardening {
             8) echo "[*] Exiting advanced hardening menu."; break ;;
             *) echo "[X] Invalid option." ;;
         esac
-        echo
+        echo ""
     done
 }
 
+##################### WEB HARDENING MENU #####################
 function show_web_hardening_menu {
     print_banner "Web Hardening Menu"
-    echo " 1) Run full web hardening process"
-    echo " 2) Backup databases"
-    echo " 3) Secure PHP configuration"
-    echo " 4) Install ModSecurity"
-    echo " 5) Run mysql_secure_installation"
-    echo " 6) Manage web directory immutability"
-    echo " 7) Exit Web Hardening Menu"
-    local web_choice
-    read -p "Enter your choice [1-7]: " web_choice
-    case $web_choice in
+    echo "  1) Run full web hardening process"
+    echo "  2) Backup databases"
+    echo "  3) Secure php.ini"
+    echo "  4) Install ModSecurity"
+    echo "  5) Run mysql_secure_installation"
+    echo "  6) Manage web directory immutability"
+    echo "  7) Exit web hardening menu"
+    local web_menu_choice
+    read -p "Enter your choice [1-7]: " web_menu_choice
+    case $web_menu_choice in
         1)
-            harden_web
+            print_banner "Web Hardening Initiated"
+            backup_databases
+            secure_php_ini
+            install_modsecurity
+            my_secure_sql_installation
+            manage_web_immutability
             ;;
         2)
+            print_banner "Web Hardening Initiated"
             backup_databases
             ;;
         3)
+            print_banner "Web Hardening Initiated"
             secure_php_ini
             ;;
         4)
+            print_banner "Web Hardening Initiated"
             install_modsecurity
             ;;
         5)
+            print_banner "Web Hardening Initiated"
             my_secure_sql_installation
             ;;
         6)
+            print_banner "Web Hardening Initiated"
             manage_web_immutability
             ;;
         7)
-            echo "[*] Exiting Web Hardening Menu"
+            echo "[*] Exiting web hardening menu."
             ;;
         *)
             echo "[X] Invalid option."
@@ -1325,19 +1297,20 @@ function show_web_hardening_menu {
     esac
 }
 
-##################### MAIN MENU FUNCTIONS #####################
+##################### MAIN MENU #####################
 function show_menu {
     print_banner "Hardening Script Main Menu"
-    echo " 1) Full Hardening Process (Run all)"
-    echo " 2) User Management"
-    echo " 3) Firewall Configuration"
-    echo " 4) Backup"
-    echo " 5) Splunk Installation"
-    echo " 6) SSH Hardening"
-    echo " 7) PAM/Profile Fixes & System Config"
-    echo " 8) Web Hardening"
-    echo " 9) Advanced Hardening"
-    echo " 10) Exit"
+    echo "  1) Full Hardening Process (Run all)"
+    echo "  2) User Management"
+    echo "  3) Firewall Configuration"
+    echo "  4) Backup"
+    echo "  5) Splunk Installation"
+    echo "  6) SSH Hardening"
+    echo "  7) PAM/Profile Fixes & System Config"
+    echo "  8) Web Hardening"
+    echo "  9) Advanced Hardening"
+    echo "  10) Exit"
+    echo
     local menu_choice
     read -p "Enter your choice [1-10]: " menu_choice
     echo
@@ -1364,13 +1337,14 @@ function show_menu {
         8) show_web_hardening_menu ;;
         9) advanced_hardening ;;
         10) echo "Exiting..."; exit 0 ;;
-        *) echo "[X] Invalid option. Exiting."; exit 1 ;;
+        *) echo "Invalid option. Exiting."; exit 1 ;;
     esac
 }
 
+##################### MAIN FUNCTION #####################
 function main {
     echo "CURRENT TIME: $(date +"%Y-%m-%d_%H:%M:%S")"
-    echo "[*] Starting full hardening process"
+    echo "[*] Starting full hardening process..."
     detect_system_info
     install_prereqs
     create_ccdc_users
@@ -1401,20 +1375,21 @@ function main {
         advanced_hardening
     fi
     echo "[*] Full hardening process complete."
-    echo "[*] See log at $LOG"
+    echo "[*] Script log available at $LOG"
     echo "[*] ***Please install system updates now***"
 }
 
-##################### ARGUMENT PARSING & LOGGING SETUP #####################
+##################### ARGUMENT PARSING #####################
 for arg in "$@"; do
     case "$arg" in
         --debug )
-            debug="true"
             echo "[*] Debug mode enabled"
+            debug="true"
             ;;
     esac
 done
 
+##################### LOGGING SETUP #####################
 LOG_PATH=$(dirname "$LOG")
 if [ ! -d "$LOG_PATH" ]; then
     mkdir -p "$LOG_PATH"
