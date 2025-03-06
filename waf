@@ -1,0 +1,123 @@
+#!/bin/bash
+set -e
+
+# This script installs ModSecurity and compiles the ModSecurity-nginx connector
+# for Nginx, then configures cPGuard WAF. Run as root or with sudo.
+
+#############################
+# Step 1: Install Nginx
+#############################
+echo "Updating package lists and installing Nginx (if not already installed)..."
+apt update
+apt install -y nginx
+
+#############################
+# Step 2: Download and Compile ModSecurity
+#############################
+echo "Installing build dependencies for ModSecurity..."
+apt-get install -y libtool autoconf build-essential libpcre3-dev zlib1g-dev libssl-dev \
+libxml2-dev libgeoip-dev liblmdb-dev libyajl-dev libcurl4-openssl-dev libpcre++-dev pkgconf \
+libxslt1-dev libgd-dev automake
+
+echo "Cloning ModSecurity repository..."
+cd /usr/local/src
+git clone --depth 100 -b v3/master --single-branch https://github.com/SpiderLabs/ModSecurity.git
+cd ModSecurity
+git submodule init
+git submodule update
+
+echo "Building and installing ModSecurity..."
+sh build.sh
+./configure
+make
+make install
+
+#############################
+# Step 3: Download and Compile ModSecurity-nginx Connector
+#############################
+# Determine the Nginx version installed. Adjust version below if needed.
+NGINX_VERSION="1.21.4"
+echo "Using Nginx version ${NGINX_VERSION} for module compilation."
+
+echo "Creating working directory..."
+mkdir -p /usr/local/src/cpg
+cd /usr/local/src/cpg
+
+echo "Downloading Nginx source code..."
+wget http://nginx.org/download/nginx-${NGINX_VERSION}.tar.gz
+tar -xvzf nginx-${NGINX_VERSION}.tar.gz
+
+echo "Cloning ModSecurity-nginx connector repository..."
+git clone https://github.com/SpiderLabs/ModSecurity-nginx
+
+echo "Compiling the ModSecurity Nginx connector module..."
+cd nginx-${NGINX_VERSION}
+./configure --with-compat --with-openssl=/usr/include/openssl/ --add-dynamic-module=/usr/local/src/cpg/ModSecurity-nginx
+make modules
+
+echo "Copying the module to Nginx modules directory..."
+cp objs/ngx_http_modsecurity_module.so /usr/share/nginx/modules/
+
+#############################
+# Step 4: Load ModSecurity Module into Nginx
+#############################
+echo "Configuring Nginx to load the ModSecurity module..."
+cat << 'EOF' > /etc/nginx/modules-enabled/50-mod-http-modsecurity.conf
+load_module modules/ngx_http_modsecurity_module.so;
+EOF
+
+#############################
+# Step 5: Install Nginx Configuration for cPGuard WAF
+#############################
+echo "Adding include directive to /etc/nginx/nginx.conf..."
+# Insert the include after the sites-enabled include if it doesn't already exist.
+if ! grep -q "include /etc/nginx/cpguard_waf_load.conf;" /etc/nginx/nginx.conf; then
+    sed -i '/include \/etc\/nginx\/sites-enabled\/\*\.conf;/a \    include /etc/nginx/cpguard_waf_load.conf;' /etc/nginx/nginx.conf
+fi
+
+echo "Creating /etc/nginx/cpguard_waf_load.conf..."
+cat << 'EOF' > /etc/nginx/cpguard_waf_load.conf
+modsecurity on;
+modsecurity_rules_file /etc/nginx/nginx-modsecurity.conf;
+EOF
+
+echo "Creating /etc/nginx/nginx-modsecurity.conf with ModSecurity rules..."
+cat << 'EOF' > /etc/nginx/nginx-modsecurity.conf
+SecRuleEngine On
+SecRequestBodyAccess On
+SecDefaultAction "phase:2,deny,log,status:406"
+SecRequestBodyLimitAction ProcessPartial
+SecResponseBodyLimitAction ProcessPartial
+SecRequestBodyLimit 13107200
+SecRequestBodyNoFilesLimit 131072
+SecPcreMatchLimit 250000
+SecPcreMatchLimitRecursion 250000
+SecCollectionTimeout 600
+SecDebugLog /var/log/nginx/modsec_debug.log
+SecDebugLogLevel 0
+SecAuditEngine RelevantOnly
+SecAuditLog /var/log/nginx/modsec_audit.log
+SecUploadDir /tmp
+SecTmpDir /tmp
+SecDataDir /tmp
+SecTmpSaveUploadedFiles on
+# Include file for cPGuard WAF
+Include /etc/nginx/cpguard_waf.conf
+EOF
+
+#############################
+# Step 6: Configure cPGuard WAF Parameters
+#############################
+echo "cPGuard WAF Parameters:"
+echo "waf_server = nginx"
+echo "waf_server_conf = /etc/nginx/cpguard_waf.conf"
+echo "waf_server_restart_cmd = /usr/sbin/service nginx restart"
+echo "waf_audit_log = /var/log/nginx/modsec_audit.log"
+
+#############################
+# Restart Nginx to apply changes
+#############################
+echo "Restarting Nginx..."
+service nginx restart
+
+echo "ModSecurity installation with cPGuard WAF integration is complete."
