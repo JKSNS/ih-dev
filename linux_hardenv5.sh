@@ -509,7 +509,8 @@ function setup_custom_iptables {
     sudo iptables -P OUTPUT DROP
     sudo iptables -P INPUT DROP
 
-    # Allow loopback outbound traffic.
+    # Allow loopback traffic.
+    sudo iptables -A INPUT -i lo -j ACCEPT
     sudo iptables -A OUTPUT -o lo -j ACCEPT
 
     # Allow established/related connections.
@@ -519,8 +520,8 @@ function setup_custom_iptables {
     # Explicitly allow outbound DNS queries (TCP and UDP on port 53).
     sudo iptables -A OUTPUT -p tcp --dport 53 -j ACCEPT
     sudo iptables -A OUTPUT -p udp --dport 53 -j ACCEPT
-    # (Note: Inbound DNS responses are allowed automatically via conntrack.)
 
+    # DNS server selection and further iptables rules...
     echo "Select your DNS server option:"
     echo "  1) Use Cloudflare DNS servers (1.1.1.1, 1.0.0.1)"
     echo "  2) Use default gateway/router as your DNS server"
@@ -540,11 +541,7 @@ function setup_custom_iptables {
         dns_value="192.168.XXX.1 192.168.XXX.2"
     fi
 
-    # [The DSU dual-mode script block remains unchanged, except that any inbound DNS allow lines are removed.]
-    # Create and execute the DSU script as in your original code...
-    # (See your existing code block for the DSU script; no inbound DNS rules are added.)
-    
-    # Save the iptables rules persistently.
+    # Additional iptables configurations...
     backup_current_iptables_rules
 
     # Ask whether to enter additional (extended) iptables management.
@@ -552,6 +549,17 @@ function setup_custom_iptables {
     if [[ "$ext_choice" == "y" || "$ext_choice" == "Y" ]]; then
         extended_iptables
     fi
+}
+
+########################################################################
+# FUNCTION: ossec open/close
+########################################################################
+function open_ossec_ports {
+    print_banner "Opening OSSEC Ports"
+    sudo iptables -A OUTPUT -p udp --dport 1514 -j ACCEPT
+    sudo iptables -A OUTPUT -p udp --dport 1515 -j ACCEPT
+    echo "[*] OSSEC outbound ports 1514 and 1515 (UDP) have been opened."
+    backup_current_iptables_rules
 }
 
 ########################################################################
@@ -730,55 +738,63 @@ function firewall_configuration_menu {
         1)
             # UFW submenu loop
             while true; do
-                echo "===== UFW Menu ====="
-                echo "  1) Setup UFW"
-                echo "  2) Create inbound allow rule"
-                echo "  3) Create outbound allow rule"
-                echo "  4) Show UFW rules"
-                echo "  5) Reset UFW"
-                echo "  6) Show Running Services"
-                echo "  7) Disable default deny (temporarily allow outbound)"
-                echo "  8) Enable default deny (restore outbound blocking)"
-                echo "  9) Exit UFW menu"
-                read -p "Enter your choice [1-9]: " ufw_choice
+                echo "===== IPtables Menu ====="
+                echo "  1) Setup IPtables"
+                echo "  2) Create outbound allow rule"
+                echo "  3) Create inbound allow rule"
+                echo "  4) Create outbound deny rule"
+                echo "  5) Create inbound deny rule"
+                echo "  6) Show IPtables rules"
+                echo "  7) Reset IPtables"
+                echo "  8) Show Running Services"
+                echo "  9) Disable default deny (temporarily allow outbound)"
+                echo "  10) Enable default deny (restore outbound blocking)"
+                echo "  11) Open OSSEC Ports (UDP 1514 & 1515)"
+                echo "  12) Exit IPtables menu"
+                read -p "Enter your choice [1-12]: " ipt_choice
                 echo
-                case $ufw_choice in
+                case $ipt_choice in
                     1)
-                        setup_ufw
+                        setup_custom_iptables
                         ;;
                     2)
-                        echo "[*] Enter inbound port numbers (one per line; hit ENTER on a blank line to finish):"
-                        ports=$(get_input_list)
-                        for port in $ports; do
-                            sudo ufw allow in "$port"
-                            echo "[*] Inbound allow rule added for port $port"
-                        done
+                        custom_iptables_manual_outbound_rules
                         ;;
                     3)
-                        echo "[*] Enter outbound port numbers (one per line; hit ENTER on a blank line to finish):"
-                        ports=$(get_input_list)
-                        for port in $ports; do
-                            sudo ufw allow out "$port"
-                            echo "[*] Outbound allow rule added for port $port"
-                        done
+                        custom_iptables_manual_rules
                         ;;
                     4)
-                        sudo ufw status numbered
+                        read -p "Enter outbound port number to deny: " port
+                        sudo iptables -A OUTPUT --protocol tcp --dport "$port" -j DROP
+                        echo "[*] Outbound deny rule added for port $port"
+                        backup_current_iptables_rules
                         ;;
                     5)
-                        echo "[*] Resetting UFW..."
-                        sudo ufw --force reset
+                        read -p "Enter inbound port number to deny: " port
+                        sudo iptables -A INPUT --protocol tcp --dport "$port" -j DROP
+                        echo "[*] Inbound deny rule added for port $port"
+                        backup_current_iptables_rules
                         ;;
                     6)
-                        audit_running_services
+                        sudo iptables -L -n -v
                         ;;
                     7)
-                        ufw_disable_default_deny
+                        reset_iptables
+                        backup_current_iptables_rules
                         ;;
                     8)
-                        ufw_enable_default_deny
+                        audit_running_services
                         ;;
                     9)
+                        iptables_disable_default_deny
+                        ;;
+                    10)
+                        iptables_enable_default_deny
+                        ;;
+                    11)
+                        open_ossec_ports
+                        ;;
+                    12)
                         break
                         ;;
                     *)
