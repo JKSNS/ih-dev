@@ -529,6 +529,13 @@ function setup_custom_iptables {
     # Explicitly allow outbound DNS queries (TCP and UDP on port 53).
     sudo iptables -A OUTPUT -p tcp --dport 53 -j ACCEPT
     sudo iptables -A OUTPUT -p udp --dport 53 -j ACCEPT
+    # Allow inbound DNS traffic (for responses or if acting as a DNS server).
+    sudo iptables -A INPUT -p tcp --dport 53 -j ACCEPT
+    sudo iptables -A INPUT -p udp --dport 53 -j ACCEPT
+
+    # Allow ICMP traffic (for pings).
+    sudo iptables -A INPUT -p icmp -j ACCEPT
+    sudo iptables -A OUTPUT -p icmp -j ACCEPT
 
     # DNS server selection and further iptables rules...
     echo "Select your DNS server option:"
@@ -559,6 +566,7 @@ function setup_custom_iptables {
         extended_iptables
     fi
 }
+
 
 ########################################################################
 # FUNCTION: ossec open/close
