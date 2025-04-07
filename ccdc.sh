@@ -1062,16 +1062,13 @@ function unencrypt_backups {
     fi
 }
 
-########################################################################
-# FUNCTION: backups
-########################################################################
+# In Ansible mode, we skip the backup section entirely.
 function backups {
-    print_banner "Backup Menu"
     if [ "$ANSIBLE" == "true" ]; then
-        echo "[*] Ansible mode: Running backup_directories with defaults."
-        backup_directories
+        echo "[*] Ansible mode: Skipping backup section."
         return 0
     fi
+    print_banner "Backup Menu"
     echo "1) Backup Directories"
     echo "2) Decrypt Backup"
     echo "3) Exit Backup Menu"
@@ -1384,14 +1381,14 @@ function manage_web_immutability {
     fi
 }
 
-# Modified harden_web function:
+# Modified harden_web: In ansible mode, skip secure MySQL installation and web immutability.
 function harden_web {
     print_banner "Web Hardening Initiated"
     backup_databases
     secure_php_ini
     install_modsecurity
     if [ "$ANSIBLE" == "true" ]; then
-         echo "[*] Ansible mode: Skipping secure MySQL installation and web directory immutability steps."
+         echo "[*] Ansible mode: Skipping secure MySQL installation and web directory immutability."
     else
          my_secure_sql_installation
          manage_web_immutability
@@ -1738,7 +1735,12 @@ function main {
     audit_running_services
     disable_other_firewalls
     firewall_configuration_menu
-    backups
+    # In ansible mode, skip the backup section.
+    if [ "$ANSIBLE" != "true" ]; then
+         backups
+    else
+         echo "[*] Ansible mode: Skipping backup section."
+    fi
     if [ "$ANSIBLE" == "true" ]; then
          echo "[*] Ansible mode: Skipping Splunk installation."
     else
@@ -1762,8 +1764,7 @@ function main {
              advanced_hardening
          fi
     else
-         echo "[*] Ansible mode: Skipping interactive web and advanced hardening prompts."
-         # Optionally, you can call harden_web here if you want to run web hardening non-interactively.
+         echo "[*] Ansible mode: Running web hardening and advanced hardening non-interactively."
          harden_web
          advanced_hardening
     fi
