@@ -519,28 +519,39 @@ function ufw_enable_default_deny {
 function setup_custom_iptables {
     print_banner "Configuring iptables (Custom Script)"
     reset_iptables
+
+    # Set default policies: DROP for INPUT and OUTPUT
     sudo iptables -P OUTPUT DROP
     sudo iptables -P INPUT DROP
+
     # Allow loopback traffic by default.
     sudo iptables -A INPUT -i lo -j ACCEPT
     sudo iptables -A OUTPUT -o lo -j ACCEPT
+
+    # (Optional) Drop FORWARD chain (if this box is not a router)
+    sudo iptables -P FORWARD DROP
+    echo "[WARNING] FORWARD chain is set to DROP. If this box is a router or network device, please run 'sudo iptables -P FORWARD ALLOW'."
+
     # Allow established/related connections.
     sudo iptables -A OUTPUT -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT
     sudo iptables -A INPUT -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT
+
     # Allow outbound DNS queries.
     sudo iptables -A OUTPUT -p tcp --dport 53 -j ACCEPT
     sudo iptables -A OUTPUT -p udp --dport 53 -j ACCEPT
     # Allow inbound DNS traffic.
     sudo iptables -A INPUT -p tcp --dport 53 -j ACCEPT
     sudo iptables -A INPUT -p udp --dport 53 -j ACCEPT
+
     # Allow ICMP traffic (for pings).
     sudo iptables -A INPUT -p icmp -j ACCEPT
     sudo iptables -A OUTPUT -p icmp -j ACCEPT
+
     # Allow outbound HTTPS (443) and HTTP (80) by default.
     sudo iptables -A OUTPUT -p tcp --dport 443 -j ACCEPT
     sudo iptables -A OUTPUT -p tcp --dport 80 -j ACCEPT
 
-    # Read current running TCP listening ports and allow inbound traffic (skip DNS port 53).
+    # Read current running TCP listening ports and allow inbound traffic (except port 53).
     running_ports=$(ss -lnt | awk 'NR>1 {split($4,a,":"); print a[length(a)]}' | sort -nu)
     for port in $running_ports; do
         if [ "$port" != "53" ]; then
