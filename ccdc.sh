@@ -533,14 +533,14 @@ function setup_custom_iptables {
     # Allow inbound DNS traffic.
     sudo iptables -A INPUT -p tcp --dport 53 -j ACCEPT
     sudo iptables -A INPUT -p udp --dport 53 -j ACCEPT
-    # Allow ICMP traffic for pings.
+    # Allow ICMP traffic (for pings).
     sudo iptables -A INPUT -p icmp -j ACCEPT
     sudo iptables -A OUTPUT -p icmp -j ACCEPT
-    # Allow outbound HTTPS (port 443) and HTTP (port 80) by default.
+    # Allow outbound HTTPS (443) and HTTP (80) by default.
     sudo iptables -A OUTPUT -p tcp --dport 443 -j ACCEPT
     sudo iptables -A OUTPUT -p tcp --dport 80 -j ACCEPT
 
-    # Read current running TCP listening ports and allow inbound traffic (except DNS port 53).
+    # Read current running TCP listening ports and allow inbound traffic (skip DNS port 53).
     running_ports=$(ss -lnt | awk 'NR>1 {split($4,a,":"); print a[length(a)]}' | sort -nu)
     for port in $running_ports; do
         if [ "$port" != "53" ]; then
@@ -1405,7 +1405,7 @@ function harden_web {
     secure_php_ini
     install_modsecurity
     if [ "$ANSIBLE" == "true" ]; then
-         echo "[*] Ansible mode: Skipping secure MySQL installation and web directory immutability."
+         echo "[*] Ansible mode: Skipping mysql_secure_installation and web directory immutability."
     else
          my_secure_sql_installation
          manage_web_immutability
@@ -1595,8 +1595,7 @@ function run_full_advanced_hardening {
 
 function advanced_hardening {
     if [ "$ANSIBLE" == "true" ]; then
-         echo "[*] Ansible mode: Running full advanced hardening non-interactively."
-         run_full_advanced_hardening
+         echo "[*] Ansible mode: Skipping advanced hardening prompts."
          return 0
     fi
     local adv_choice
@@ -1780,9 +1779,9 @@ function main {
              advanced_hardening
          fi
     else
-         echo "[*] Ansible mode: Running web hardening and advanced hardening non-interactively."
+         echo "[*] Ansible mode: Running web hardening non-interactively."
          harden_web
-         advanced_hardening
+         echo "[*] Ansible mode: Skipping advanced hardening prompts."
     fi
     echo "[*] End of full hardening process"
     echo "[*] Script log can be viewed at $LOG"
