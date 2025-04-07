@@ -521,23 +521,28 @@ function setup_custom_iptables {
     reset_iptables
     sudo iptables -P OUTPUT DROP
     sudo iptables -P INPUT DROP
+    # Allow loopback traffic by default.
     sudo iptables -A INPUT -i lo -j ACCEPT
     sudo iptables -A OUTPUT -o lo -j ACCEPT
+    # Allow established/related connections.
     sudo iptables -A OUTPUT -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT
     sudo iptables -A INPUT -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT
+    # Allow outbound DNS queries.
     sudo iptables -A OUTPUT -p tcp --dport 53 -j ACCEPT
     sudo iptables -A OUTPUT -p udp --dport 53 -j ACCEPT
+    # Allow inbound DNS traffic.
     sudo iptables -A INPUT -p tcp --dport 53 -j ACCEPT
     sudo iptables -A INPUT -p udp --dport 53 -j ACCEPT
+    # Allow ICMP traffic for pings.
     sudo iptables -A INPUT -p icmp -j ACCEPT
     sudo iptables -A OUTPUT -p icmp -j ACCEPT
-    # Allow outbound HTTPS (port 443) by default.
+    # Allow outbound HTTPS (port 443) and HTTP (port 80) by default.
     sudo iptables -A OUTPUT -p tcp --dport 443 -j ACCEPT
+    sudo iptables -A OUTPUT -p tcp --dport 80 -j ACCEPT
 
-    # Now, read the current running TCP listening ports and allow inbound traffic
+    # Read current running TCP listening ports and allow inbound traffic (except DNS port 53).
     running_ports=$(ss -lnt | awk 'NR>1 {split($4,a,":"); print a[length(a)]}' | sort -nu)
     for port in $running_ports; do
-        # Skip port 53 (DNS) which is already allowed.
         if [ "$port" != "53" ]; then
             sudo iptables -A INPUT -p tcp --dport "$port" -j ACCEPT
         fi
@@ -1074,7 +1079,7 @@ function unencrypt_backups {
     fi
 }
 
-# In Ansible mode, we skip the backup section entirely.
+# In Ansible mode, skip the backup section entirely.
 function backups {
     if [ "$ANSIBLE" == "true" ]; then
         echo "[*] Ansible mode: Skipping backup section."
@@ -1747,7 +1752,6 @@ function main {
     audit_running_services
     disable_other_firewalls
     firewall_configuration_menu
-    # In ansible mode, skip the backup section.
     if [ "$ANSIBLE" != "true" ]; then
          backups
     else
@@ -1808,7 +1812,6 @@ fi
 
 ##################### MAIN EXECUTION #####################
 if [ "$ANSIBLE" == "true" ]; then
-    # In ansible mode, run the main function directly without showing the interactive menu.
     main
 else
     show_menu
