@@ -399,18 +399,27 @@ function disable_other_firewalls {
 ########################################################################
 
 function backup_current_iptables_rules {
-    echo "[*] Backing up current iptables rules to $IPTABLES_BACKUP"
-    sudo iptables-save > "$IPTABLES_BACKUP"
-}
-
-function restore_iptables_rules {
-    if [ -f "$IPTABLES_BACKUP" ]; then
-        echo "[*] Restoring iptables rules from $IPTABLES_BACKUP"
-        sudo iptables-restore < "$IPTABLES_BACKUP"
+    if grep -qi 'fedora\|centos\|rhel' /etc/os-release; then
+        sudo iptables-save | sudo tee /etc/sysconfig/iptables > /dev/null
+        echo "[*] Iptables rules saved to /etc/sysconfig/iptables"
+    elif grep -qi 'suse' /etc/os-release; then
+        sudo iptables-save | sudo tee /etc/sysconfig/iptables > /dev/null
+        echo "[*] Iptables rules saved to /etc/sysconfig/iptables (SUSE)"
+    elif grep -qi 'debian\|ubuntu' /etc/os-release; then
+        if [ -f /etc/iptables/rules.v4 ]; then
+            sudo iptables-save | sudo tee /etc/iptables/rules.v4 > /dev/null
+            echo "[*] Iptables rules saved to /etc/iptables/rules.v4"
+        elif command -v netfilter-persistent &> /dev/null; then
+            sudo netfilter-persistent save
+            echo "[*] Iptables rules saved using netfilter-persistent"
+        else
+            echo "[!] Warning: iptables persistent saving is not configured on this system."
+        fi
     else
-        echo "[X] No iptables backup file found."
+        echo "[*] Unknown OS. Please ensure iptables rules are saved manually if needed."
     fi
 }
+
 
 function backup_current_ufw_rules {
     echo "[*] Backing up current UFW rules to $UFW_BACKUP"
