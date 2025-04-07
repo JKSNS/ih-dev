@@ -1796,7 +1796,9 @@ function main {
     fi
     echo "[*] End of full hardening process"
     echo "[*] Script log can be viewed at $LOG"
+    echo "[*][WARNING] FORWARD chain is set to DROP. If this box is a router or network device, please run 'sudo iptables -P FORWARD ALLOW'. "
     echo "[*] ***Please install system updates now***"
+    
 }
 
 ##################### ARGUMENT PARSING + LOGGING SETUP #####################
