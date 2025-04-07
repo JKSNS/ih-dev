@@ -610,28 +610,6 @@ function iptables_enable_default_deny {
     echo "[*] iptables default policies are now set to DROP (current rules preserved)."
 }
 
-########################################################################
-# FUNCTION: backup_current_iptables_rules
-# Saves current iptables rules persistently based on the detected OS.
-########################################################################
-function backup_current_iptables_rules {
-    if grep -qi 'fedora\|centos\|rhel' /etc/os-release; then
-        sudo iptables-save | sudo tee /etc/sysconfig/iptables > /dev/null
-        echo "[*] Iptables rules saved to /etc/sysconfig/iptables"
-    elif grep -qi 'debian\|ubuntu' /etc/os-release; then
-        if [ -f /etc/iptables/rules.v4 ]; then
-            sudo iptables-save | sudo tee /etc/iptables/rules.v4 > /dev/null
-            echo "[*] Iptables rules saved to /etc/iptables/rules.v4"
-        elif command -v netfilter-persistent &> /dev/null; then
-            sudo netfilter-persistent save
-            echo "[*] Iptables rules saved using netfilter-persistent"
-        else
-            echo "[!] Warning: iptables persistent saving is not configured on this system."
-        fi
-    else
-        echo "[*] Unknown OS. Please ensure iptables rules are saved manually if needed."
-    fi
-}
 
 ########################################################################
 # FUNCTION: custom_iptables_manual_rules (inbound)
