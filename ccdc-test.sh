@@ -3,6 +3,11 @@
 #    e.g.: ./harden.sh -ansible
 #
 # NOTE: It is recommended to run this script with root privileges (e.g., via sudo)
+
+
+# TRY TO ADD ADVANCED FUNCTIONALITY FROM CCDC TO THIS TEST SCRIPT?? CONSIDERING IT WORKS lol...
+
+
 if [ "$EUID" -ne 0 ]; then
     echo "[X] Please run this script as root (or via sudo)."
     exit 1
