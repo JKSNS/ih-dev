@@ -563,6 +563,25 @@ function open_ossec_ports {
 }
 
 ########################################################################
+# FUNCTION: only allow related/established
+########################################################################
+function apply_established_only_rules {
+    print_banner "Applying Established/Related Only Rules"
+    reset_iptables
+    # Set default policies to DROP
+    sudo iptables -P INPUT DROP
+    sudo iptables -P OUTPUT DROP
+    # Allow loopback traffic (default)
+    sudo iptables -A INPUT -i lo -j ACCEPT
+    sudo iptables -A OUTPUT -o lo -j ACCEPT
+    # Allow only established/related connections
+    sudo iptables -A INPUT -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT
+    sudo iptables -A OUTPUT -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT
+    backup_current_iptables_rules
+}
+
+
+########################################################################
 # FUNCTION: iptables_enable/deny
 # Toggle between the two
 ########################################################################
@@ -750,8 +769,9 @@ function firewall_configuration_menu {
                 echo "  9) Disable default deny (temporarily allow outbound)"
                 echo "  10) Enable default deny (restore outbound blocking)"
                 echo "  11) Open OSSEC Ports (UDP 1514 & 1515)"
-                echo "  12) Exit IPtables menu"
-                read -p "Enter your choice [1-12]: " ipt_choice
+                echo "  12) Allow only Established/Related Traffic"
+                echo "  13) Exit IPtables menu"
+                read -p "Enter your choice [1-13]: " ipt_choice
                 echo
                 case $ipt_choice in
                     1)
@@ -795,6 +815,9 @@ function firewall_configuration_menu {
                         open_ossec_ports
                         ;;
                     12)
+                        apply_established_only_rules
+                        ;;
+                    13)
                         break
                         ;;
                     *)
