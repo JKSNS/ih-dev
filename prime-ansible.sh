@@ -1,6 +1,5 @@
 #!/bin/bash
 # Usage: ./harden.sh [option]
-
 # NOTE: It is recommended to run this script with root privileges (e.g., via sudo)
 if [ "$EUID" -ne 0 ]; then
     echo "[X] Please run this script as root (or via sudo)."
@@ -14,14 +13,14 @@ pm=""
 sudo_group=""
 ccdc_users=( "ccdcuser1" "ccdcuser2" )
 debug="false"
+ANSIBLE="false"      # When set to "true", interactive prompts will be skipped.
 IPTABLES_BACKUP="/tmp/iptables_backup.rules"
 UFW_BACKUP="/tmp/ufw_backup.rules"
 #####################################################
 
 ##################### FUNCTIONS #####################
+
 # Prints text in a banner
-# Arguments:
-#   $1: Text to print
 function print_banner {
     echo
     echo "#######################################"
@@ -43,35 +42,55 @@ function debug_print {
 }
 
 function get_input_string {
-    read -r -p "$1" input
-    echo "$input"
+    if [ "$ANSIBLE" == "true" ]; then
+        # In ansible mode, return an empty string or a default value if desired.
+        echo ""
+    else
+        read -r -p "$1" input
+        echo "$input"
+    fi
 }
 
 function get_silent_input_string {
-    read -r -s -p "$1" input
-    echo "$input"
+    if [ "$ANSIBLE" == "true" ]; then
+        # Return a default non-empty string in ansible mode.
+        echo "DefaultPass123!"
+    else
+        read -r -s -p "$1" input
+        echo "$input"
+    fi
 }
 
 function get_input_list {
-    local input_list=()
-    while [ "$continue" != "false" ]; do
-        input=$(get_input_string "Enter input: (one entry per line; hit enter to continue): ")
-        if [ "$input" == "" ]; then
-            continue="false"
-        else
-            input_list+=("$input")
-        fi
-    done
-    echo "${input_list[@]}"
+    if [ "$ANSIBLE" == "true" ]; then
+        # In ansible mode, return an empty list.
+        echo ""
+    else
+        local input_list=()
+        while [ "$continue" != "false" ]; do
+            input=$(get_input_string "Enter input: (one entry per line; hit enter to continue): ")
+            if [ "$input" == "" ]; then
+                continue="false"
+            else
+                input_list+=("$input")
+            fi
+        done
+        echo "${input_list[@]}"
+    fi
 }
 
 function exclude_users {
-    users="$@"
-    input=$(get_input_list)
-    for item in $input; do
-        users+=("$item")
-    done
-    echo "${users[@]}"
+    if [ "$ANSIBLE" == "true" ]; then
+        # In ansible mode, no additional exclusions.
+        echo "$@"
+    else
+        users="$@"
+        input=$(get_input_list)
+        for item in $input; do
+            users+=("$item")
+        done
+        echo "${users[@]}"
+    fi
 }
 
 function get_users {
@@ -79,7 +98,7 @@ function get_users {
     exclude_users=$(sed -e 's/ /\\|/g' <<< $2)
     users=$(awk -F ':' "$awk_string" /etc/passwd)
     filtered=$(echo "$users" | grep -v -e $exclude_users)
-    readarray -t results <<< $filtered
+    readarray -t results <<< "$filtered"
     echo "${results[@]}"
 }
 
@@ -134,6 +153,10 @@ function install_prereqs {
 }
 
 function change_root_password {
+    if [ "$ANSIBLE" == "true" ]; then
+        echo "[*] Ansible mode: Skipping root password change."
+        return 0
+    fi
     print_banner "Changing Root Password"
     while true; do
         root_password=$(get_silent_input_string "Enter new root password: ")
@@ -154,13 +177,30 @@ function change_root_password {
     fi
 }
 
-# Updated create_ccdc_users function:
+# Updated create_ccdc_users function with ansible non-interactive branch.
 function create_ccdc_users {
+    if [ "$ANSIBLE" == "true" ]; then
+        print_banner "Creating ccdc users (Ansible mode: Non-interactive)"
+        default_password="ChangeMe123!"  # Default password for automation
+        for user in "${ccdc_users[@]}"; do
+            if ! id "$user" &>/dev/null; then
+                if [ -f "/bin/bash" ]; then
+                    sudo useradd -m -s /bin/bash "$user"
+                else
+                    sudo useradd -m -s /bin/sh "$user"
+                fi
+                echo "[*] Creating $user with default password."
+                echo "$user:$default_password" | sudo chpasswd
+                sudo usermod -aG $sudo_group "$user"
+            else
+                echo "[*] $user exists. Skipping interactive password update."
+            fi
+        done
+        return 0
+    fi
     print_banner "Creating ccdc users"
-
     for user in "${ccdc_users[@]}"; do
         if id "$user" &>/dev/null; then
-            # For ccdcuser1 and ccdcuser2, prompt to update their password.
             if [[ "$user" == "ccdcuser1" ]]; then
                 echo "[*] $user already exists. Do you want to update the password? (y/N): "
                 read -r update_choice
@@ -203,7 +243,6 @@ function create_ccdc_users {
                         fi
                     done
                 fi
-    
                 echo "[*] Would you like to change the root password? (y/N): "
                 read -r root_choice
                 if [[ "$root_choice" == "y" || "$root_choice" == "Y" ]]; then
@@ -222,8 +261,6 @@ function create_ccdc_users {
                 echo "[X] ERROR: Could not find valid shell"
                 exit 1
             fi
-
-            # For ccdcuser1 and ccdcuser2, prompt for an individual password.
             if [[ "$user" == "ccdcuser1" ]]; then
                 echo "[*] Enter the password for $user:"
                 while true; do
@@ -262,7 +299,6 @@ function create_ccdc_users {
                         fi
                     fi
                 done
-                
                 echo "[*] Would you like to change the root password? (y/N): "
                 read -r root_choice
                 if [[ "$root_choice" == "y" || "$root_choice" == "Y" ]]; then
@@ -281,9 +317,11 @@ function create_ccdc_users {
 }
 
 function change_passwords {
+    if [ "$ANSIBLE" == "true" ]; then
+        echo "[*] Ansible mode: Skipping bulk password change."
+        return 0
+    fi
     print_banner "Changing user passwords"
-
-    # Exclude root, ccdcuser1, and ccdcuser2
     exclusions=("root" "${ccdc_users[@]}")
     echo "[*] Currently excluded users: ${exclusions[*]}"
     echo "[*] Would you like to exclude any additional users?"
@@ -291,32 +329,22 @@ function change_passwords {
     if [ "$option" == "y" ]; then
         exclusions=$(exclude_users "${exclusions[@]}")
     fi
-
-    # Get targets (all users not matching "nobody" and not in the exclusions list)
     targets=$(get_users '$1 != "nobody" {print $1}' "${exclusions[*]}")
-
     echo "[*] Enter the new password to be used for all users."
     while true; do
         password=""
         confirm_password=""
-
-        # Ask for password
         password=$(get_silent_input_string "Enter password: ")
         echo
-
-        # Confirm password
         confirm_password=$(get_silent_input_string "Confirm password: ")
         echo
-
         if [ "$password" != "$confirm_password" ]; then
             echo "Passwords do not match. Please retry."
         else
             break
         fi
     done
-
     echo
-
     echo "[*] Changing passwords..."
     for user in $targets; do
         if ! echo "$user:$password" | sudo chpasswd; then
@@ -328,6 +356,10 @@ function change_passwords {
 }
 
 function disable_users {
+    if [ "$ANSIBLE" == "true" ]; then
+        echo "[*] Ansible mode: Skipping user disabling."
+        return 0
+    fi
     print_banner "Disabling users"
     exclusions=("${ccdc_users[@]}")
     exclusions+=("root")
@@ -381,9 +413,6 @@ function audit_running_services {
     ss -tuln
 }
 
-########################################################################
-# FUNCTION: disable_other_firewalls
-########################################################################
 function disable_other_firewalls {
     print_banner "Disabling existing firewalls"
     if sudo command -v firewalld &>/dev/null; then
@@ -391,13 +420,11 @@ function disable_other_firewalls {
         sudo systemctl stop firewalld
         sudo systemctl disable firewalld
     fi
-    # The other potential firewall services remain commented out.
 }
 
 ########################################################################
-# FUNCTION: backup fw rules
+# FUNCTION: backup_current_iptables_rules
 ########################################################################
-
 function backup_current_iptables_rules {
     if grep -qi 'fedora\|centos\|rhel' /etc/os-release; then
         sudo iptables-save | sudo tee /etc/sysconfig/iptables > /dev/null
@@ -420,7 +447,6 @@ function backup_current_iptables_rules {
     fi
 }
 
-
 function backup_current_ufw_rules {
     echo "[*] Backing up current UFW rules to $UFW_BACKUP"
     sudo cp /etc/ufw/user.rules "$UFW_BACKUP"
@@ -439,40 +465,30 @@ function restore_ufw_rules {
 
 ########################################################################
 # FUNCTION: setup_ufw
-# Configures UFW firewall rules with a strict outbound deny policy (except DNS)
-# and disables IPv6.
 ########################################################################
 function setup_ufw {
     print_banner "Configuring ufw"
     sudo $pm install -y ufw
-
-    # Disable IPv6 in UFW configuration.
     sudo sed -i 's/^IPV6=yes/IPV6=no/' /etc/default/ufw
-
-    # Immediately reset UFW so that the new rules will be the only ones present.
     sudo ufw --force disable
     sudo ufw --force reset
-
-    # Set default policies: deny all outgoing and incoming traffic.
     sudo ufw default deny outgoing
     sudo ufw default deny incoming
-
-    # Allow loopback outbound traffic.
     sudo ufw allow out on lo
-
-    # Explicitly allow outbound DNS queries (TCP and UDP on port 53).
     sudo ufw allow out to any port 53 proto tcp
     sudo ufw allow out to any port 53 proto udp
-
     echo -e "[*] UFW installed and configured with strict outbound deny (except DNS) successfully.\n"
-    echo "[*] Which additional ports should be opened for incoming traffic?"
-    echo "      WARNING: Do NOT forget to add 22/SSH if needed - please don't accidentally lock yourself out!"
-    ports=$(get_input_list)
-    for port in $ports; do
-        sudo ufw allow "$port"
-        echo "[*] Rule added for port $port"
-    done
-
+    if [ "$ANSIBLE" == "true" ]; then
+        echo "[*] Ansible mode: Skipping additional inbound port configuration."
+    else
+        echo "[*] Which additional ports should be opened for incoming traffic?"
+        echo "      WARNING: Do NOT forget to add 22/SSH if needed - please don't accidentally lock yourself out!"
+        ports=$(get_input_list)
+        for port in $ports; do
+            sudo ufw allow "$port"
+            echo "[*] Rule added for port $port"
+        done
+    fi
     sudo ufw logging on
     sudo ufw --force enable
     backup_current_ufw_rules
@@ -480,7 +496,6 @@ function setup_ufw {
 
 ########################################################################
 # FUNCTION: ufw_disable_default_deny
-# Temporarily disables UFW’s default deny policy for outgoing traffic.
 ########################################################################
 function ufw_disable_default_deny {
     print_banner "Temporarily Disabling UFW Default Deny Outgoing Policy"
@@ -491,12 +506,10 @@ function ufw_disable_default_deny {
 
 ########################################################################
 # FUNCTION: ufw_enable_default_deny
-# Re-enables UFW’s default deny policy for outgoing traffic.
 ########################################################################
 function ufw_enable_default_deny {
     print_banner "Re-enabling UFW Default Deny Outgoing Policy"
     sudo ufw default deny outgoing
-    # Re-add essential outbound rules:
     sudo ufw allow out on lo
     sudo ufw allow out to any port 53 proto tcp
     sudo ufw allow out to any port 53 proto udp
@@ -506,43 +519,32 @@ function ufw_enable_default_deny {
 
 ########################################################################
 # FUNCTION: setup_custom_iptables
-# Configures iptables with a strict outbound deny policy (except DNS) for IPv4.
 ########################################################################
 function setup_custom_iptables {
     print_banner "Configuring iptables (Custom Script)"
-    
-    # Flush existing iptables rules.
     reset_iptables
-
-    # Set default policies: drop outbound and inbound traffic.
     sudo iptables -P OUTPUT DROP
     sudo iptables -P INPUT DROP
-
-    # Allow loopback traffic.
     sudo iptables -A INPUT -i lo -j ACCEPT
     sudo iptables -A OUTPUT -o lo -j ACCEPT
-
-    # Allow established/related connections.
     sudo iptables -A OUTPUT -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT
     sudo iptables -A INPUT -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT
-
-    # Explicitly allow outbound DNS queries (TCP and UDP on port 53).
     sudo iptables -A OUTPUT -p tcp --dport 53 -j ACCEPT
     sudo iptables -A OUTPUT -p udp --dport 53 -j ACCEPT
-    # Allow inbound DNS traffic (for responses or if acting as a DNS server).
     sudo iptables -A INPUT -p tcp --dport 53 -j ACCEPT
     sudo iptables -A INPUT -p udp --dport 53 -j ACCEPT
-
-    # Allow ICMP traffic (for pings).
     sudo iptables -A INPUT -p icmp -j ACCEPT
     sudo iptables -A OUTPUT -p icmp -j ACCEPT
-
-    # DNS server selection and further iptables rules...
     echo "Select your DNS server option:"
     echo "  1) Use Cloudflare DNS servers (1.1.1.1, 1.0.0.1)"
     echo "  2) Use default gateway/router as your DNS server"
     echo "  3) Use default DNS servers (192.168.XXX.1, 192.168.XXX.2)"
-    dns_choice=$(get_input_string "Enter your choice [1-3]: ")
+    if [ "$ANSIBLE" == "true" ]; then
+        dns_choice="1"
+        echo "[*] Ansible mode: Defaulting DNS server option to 1."
+    else
+        dns_choice=$(get_input_string "Enter your choice [1-3]: ")
+    fi
     if [[ "$dns_choice" == "1" ]]; then
         dns_value="1.1.1.1 1.0.0.1"
     elif [[ "$dns_choice" == "2" ]]; then
@@ -556,20 +558,19 @@ function setup_custom_iptables {
     else
         dns_value="192.168.XXX.1 192.168.XXX.2"
     fi
-
-    # Additional iptables configurations...
     backup_current_iptables_rules
-
-    # Ask whether to enter additional (extended) iptables management.
-    ext_choice=$(get_input_string "Would you like to add any additional iptables rules? (y/N): ")
-    if [[ "$ext_choice" == "y" || "$ext_choice" == "Y" ]]; then
-        extended_iptables
+    if [ "$ANSIBLE" == "false" ]; then
+        ext_choice=$(get_input_string "Would you like to add any additional iptables rules? (y/N): ")
+        if [[ "$ext_choice" == "y" || "$ext_choice" == "Y" ]]; then
+            extended_iptables
+        fi
+    else
+        echo "[*] Ansible mode: Skipping additional iptables rule prompts."
     fi
 }
 
-
 ########################################################################
-# FUNCTION: ossec open/close
+# FUNCTION: open_ossec_ports
 ########################################################################
 function open_ossec_ports {
     print_banner "Opening OSSEC Ports"
@@ -580,27 +581,22 @@ function open_ossec_ports {
 }
 
 ########################################################################
-# FUNCTION: only allow related/established
+# FUNCTION: apply_established_only_rules
 ########################################################################
 function apply_established_only_rules {
     print_banner "Applying Established/Related Only Rules"
     reset_iptables
-    # Set default policies to DROP
     sudo iptables -P INPUT DROP
     sudo iptables -P OUTPUT DROP
-    # Allow loopback traffic (default)
     sudo iptables -A INPUT -i lo -j ACCEPT
     sudo iptables -A OUTPUT -o lo -j ACCEPT
-    # Allow only established/related connections
     sudo iptables -A INPUT -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT
     sudo iptables -A OUTPUT -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT
     backup_current_iptables_rules
 }
 
-
 ########################################################################
-# FUNCTION: iptables_enable/deny
-# Toggle between the two
+# FUNCTION: iptables_disable_default_deny
 ########################################################################
 function iptables_disable_default_deny {
     print_banner "Temporarily Disabling iptables Default Deny Outgoing Policy"
@@ -610,6 +606,9 @@ function iptables_disable_default_deny {
     echo "[*] iptables default policies are now set to ACCEPT (backup saved)."
 }
 
+########################################################################
+# FUNCTION: iptables_enable_default_deny
+########################################################################
 function iptables_enable_default_deny {
     print_banner "Re-enabling iptables Default Deny Outgoing Policy"
     backup_current_iptables_rules
@@ -618,13 +617,16 @@ function iptables_enable_default_deny {
     echo "[*] iptables default policies are now set to DROP (current rules preserved)."
 }
 
-
 ########################################################################
 # FUNCTION: custom_iptables_manual_rules (inbound)
 ########################################################################
 function custom_iptables_manual_rules {
     print_banner "Manual Inbound IPtables Rule Addition"
     echo "[*] Enter port numbers (one per line) for which you wish to allow inbound TCP traffic."
+    if [ "$ANSIBLE" == "true" ]; then
+        echo "[*] Ansible mode: Skipping manual inbound rule addition."
+        return 0
+    fi
     echo "    Press ENTER on a blank line when finished."
     ports=$(get_input_list)
     for port in $ports; do
@@ -640,6 +642,10 @@ function custom_iptables_manual_rules {
 function custom_iptables_manual_outbound_rules {
     print_banner "Manual Outbound IPtables Rule Addition"
     echo "[*] Enter port numbers (one per line) for which you wish to allow outbound TCP traffic."
+    if [ "$ANSIBLE" == "true" ]; then
+        echo "[*] Ansible mode: Skipping manual outbound rule addition."
+        return 0
+    fi
     echo "    Press ENTER on a blank line when finished."
     ports=$(get_input_list)
     for port in $ports; do
@@ -651,9 +657,12 @@ function custom_iptables_manual_outbound_rules {
 
 ########################################################################
 # FUNCTION: extended_iptables
-# Provides an interactive loop for extended IPtables management.
 ########################################################################
 function extended_iptables {
+    if [ "$ANSIBLE" == "true" ]; then
+        echo "[*] Ansible mode: Skipping extended iptables management."
+        return 0
+    fi
     while true; do
         print_banner "Extended IPtables Management"
         echo "Select an option:"
@@ -711,7 +720,6 @@ function extended_iptables {
 
 ########################################################################
 # FUNCTION: reset_iptables
-# Resets the IPtables firewall.
 ########################################################################
 function reset_iptables {
     print_banner "Resetting IPtables Firewall"
@@ -729,19 +737,18 @@ function reset_iptables {
 
 ########################################################################
 # FUNCTION: firewall_configuration_menu
-# New interactive menu that first prompts for firewall type (UFW or IPtables)
-# then displays the appropriate submenu. After finishing the submenu, it exits.
 ########################################################################
 function firewall_configuration_menu {
-    # Prepare system
     detect_system_info
     install_prereqs
     disable_other_firewalls
-
-    # Run audit_running_services before the firewall menu pops up.
     audit_running_services
+    if [ "$ANSIBLE" == "true" ]; then
+         echo "[*] Ansible mode: Running default firewall configuration (iptables)."
+         setup_custom_iptables
+         return 0
+    fi
     read -p "Press ENTER to continue to the firewall configuration menu..." dummy
-
     echo
     echo "Select firewall type:"
     echo "  1) UFW"
@@ -750,7 +757,6 @@ function firewall_configuration_menu {
     echo
     case $fw_type_choice in
         1)
-            # UFW submenu loop
             while true; do
                 echo "===== UFW Menu ====="
                 echo "  1) Setup UFW"
@@ -811,7 +817,6 @@ function firewall_configuration_menu {
             done
             ;;
         2)
-            # IPtables submenu loop
             while true; do
                 echo "===== IPtables Menu ====="
                 echo "  1) Setup IPtables"
@@ -891,12 +896,9 @@ function firewall_configuration_menu {
 
 ########################################################################
 # FUNCTION: backup_directories
-# Backs up critical and additional directories/files into a single encrypted archive.
 ########################################################################
 function backup_directories {
     print_banner "Backup Directories"
-
-    # Pre-check for critical directories
     default_dirs=( "/etc/nginx" "/etc/apache2" "/usr/share/nginx" "/var/www" "/var/www/html" "/etc/lighttpd" "/etc/mysql" "/etc/postgresql" "/var/lib/apache2" "/var/lib/mysql" "/etc/redis" "/etc/phpMyAdmin" "/etc/php.d" )
     detected_dirs=()
     echo "[*] Scanning for critical directories..."
@@ -905,43 +907,43 @@ function backup_directories {
             detected_dirs+=("$d")
         fi
     done
-
     backup_list=()
     if [ ${#detected_dirs[@]} -gt 0 ]; then
         echo "[*] The following critical directories were detected:"
         for d in "${detected_dirs[@]}"; do
             echo "   $d"
         done
-        read -p "Would you like to back these up? (y/N): " detected_choice
-        if [[ "$detected_choice" == "y" || "$detected_choice" == "Y" ]]; then
+        if [ "$ANSIBLE" == "true" ]; then
             backup_list=("${detected_dirs[@]}")
+            echo "[*] Ansible mode: Automatically backing up detected directories."
+        else
+            read -p "Would you like to back these up? (y/N): " detected_choice
+            if [[ "$detected_choice" == "y" || "$detected_choice" == "Y" ]]; then
+                backup_list=("${detected_dirs[@]}")
+            fi
         fi
     else
         echo "[*] No critical directories detected."
     fi
-
-    # Ask for additional directories/files
-    read -p "Would you like to backup any additional files or directories? (y/N): " additional_choice
-    if [[ "$additional_choice" == "y" || "$additional_choice" == "Y" ]]; then
-        echo "[*] Enter additional directories/files to backup (one per line; hit ENTER on a blank line to finish):"
-        additional_dirs=$(get_input_list)
-        for item in $additional_dirs; do
-            path=$(readlink -f "$item")
-            if [ -e "$path" ]; then
-                backup_list+=("$path")
-            else
-                echo "[X] ERROR: $path does not exist."
-            fi
-        done
+    if [ "$ANSIBLE" != "true" ]; then
+        read -p "Would you like to backup any additional files or directories? (y/N): " additional_choice
+        if [[ "$additional_choice" == "y" || "$additional_choice" == "Y" ]]; then
+            echo "[*] Enter additional directories/files to backup (one per line; hit ENTER on a blank line to finish):"
+            additional_dirs=$(get_input_list)
+            for item in $additional_dirs; do
+                path=$(readlink -f "$item")
+                if [ -e "$path" ]; then
+                    backup_list+=("$path")
+                else
+                    echo "[X] ERROR: $path does not exist."
+                fi
+            done
+        fi
     fi
-
-    # Abort if nothing was selected
     if [ ${#backup_list[@]} -eq 0 ]; then
         echo "[*] No directories or files selected for backup. Exiting backup."
         return
     fi
-
-    # Prompt for backup archive name; .zip will be automatically appended if not provided
     while true; do
         backup_name=$(get_input_string "Enter a name for the backup archive (without extension .zip): ")
         if [ "$backup_name" != "" ]; then
@@ -952,17 +954,13 @@ function backup_directories {
         fi
         echo "[X] ERROR: Backup name cannot be blank."
     done
-
     echo "[*] Creating archive..."
-    # Create a zip archive containing all selected directories/files
     zip -r "$backup_name" "${backup_list[@]}" >/dev/null 2>&1
     if [ $? -ne 0 ]; then
         echo "[X] ERROR: Failed to create archive."
         return
     fi
     echo "[*] Archive created: $backup_name"
-
-    # Encrypt the archive
     echo "[*] Encrypting the archive."
     while true; do
         enc_password=$(get_silent_input_string "Enter encryption password: ")
@@ -975,7 +973,6 @@ function backup_directories {
             break
         fi
     done
-
     enc_archive="${backup_name}.enc"
     openssl enc -aes-256-cbc -salt -in "$backup_name" -out "$enc_archive" -k "$enc_password"
     if [ $? -ne 0 ]; then
@@ -983,8 +980,6 @@ function backup_directories {
         return
     fi
     echo "[*] Archive encrypted: $enc_archive"
-
-    # Prompt for the backup storage directory
     while true; do
         storage_dir=$(get_input_string "Enter directory to store the encrypted backup: ")
         storage_dir=$(readlink -f "$storage_dir")
@@ -1000,32 +995,26 @@ function backup_directories {
             fi
         fi
     done
-
-    # Move the encrypted archive to the storage directory and cleanup
     sudo mv "$enc_archive" "$storage_dir/"
     if [ $? -eq 0 ]; then
         echo "[*] Encrypted archive moved to $storage_dir"
     else
         echo "[X] ERROR: Failed to move encrypted archive."
     fi
-
     rm -f "$backup_name"
     echo "[*] Cleanup complete. Only the encrypted archive remains."
 }
 
 ########################################################################
 # FUNCTION: unencrypt_backups
-# Decrypts a previously encrypted backup archive and optionally extracts it.
 ########################################################################
 function unencrypt_backups {
     print_banner "Decrypt Backup"
     while true; do
         encrypted_file=$(get_input_string "Enter path to the encrypted backup file: ")
-        # Expand any relative path to full path
         encrypted_file=$(readlink -f "$encrypted_file")
         if [ ! -f "$encrypted_file" ]; then
             echo "[X] ERROR: File '$encrypted_file' does not exist."
-            # Search for similar files in the same directory (case-insensitive)
             dir=$(dirname "$encrypted_file")
             base=$(basename "$encrypted_file")
             echo "[*] Searching for similar files in '$dir'..."
@@ -1041,7 +1030,6 @@ function unencrypt_backups {
             break
         fi
     done
-
     while true; do
         dec_password=$(get_silent_input_string "Enter decryption password: ")
         echo
@@ -1053,7 +1041,6 @@ function unencrypt_backups {
             break
         fi
     done
-
     temp_output="decrypted_backup.zip"
     openssl enc -d -aes-256-cbc -in "$encrypted_file" -out "$temp_output" -k "$dec_password"
     if [ $? -ne 0 ]; then
@@ -1061,27 +1048,34 @@ function unencrypt_backups {
         rm -f "$temp_output"
         return
     fi
-
     echo "[*] Decryption successful. Decrypted archive: $temp_output"
-    read -p "Would you like to extract the decrypted archive? (y/N): " extract_choice
-    if [[ "$extract_choice" == "y" || "$extract_choice" == "Y" ]]; then
-        read -p "Enter directory to extract the backup: " extract_dir
-        extract_dir=$(readlink -f "$extract_dir")
-        mkdir -p "$extract_dir"
-        unzip "$temp_output" -d "$extract_dir"
-        echo "[*] Backup extracted to $extract_dir"
-        rm -f "$temp_output"
+    if [ "$ANSIBLE" == "true" ]; then
+        echo "[*] Ansible mode: Skipping extraction of decrypted archive."
     else
-        echo "[*] Decrypted archive remains as $temp_output"
+        read -p "Would you like to extract the decrypted archive? (y/N): " extract_choice
+        if [[ "$extract_choice" == "y" || "$extract_choice" == "Y" ]]; then
+            read -p "Enter directory to extract the backup: " extract_dir
+            extract_dir=$(readlink -f "$extract_dir")
+            mkdir -p "$extract_dir"
+            unzip "$temp_output" -d "$extract_dir"
+            echo "[*] Backup extracted to $extract_dir"
+            rm -f "$temp_output"
+        else
+            echo "[*] Decrypted archive remains as $temp_output"
+        fi
     fi
 }
 
 ########################################################################
 # FUNCTION: backups
-# Presents a backup menu for either backing up directories or decrypting backups.
 ########################################################################
 function backups {
     print_banner "Backup Menu"
+    if [ "$ANSIBLE" == "true" ]; then
+        echo "[*] Ansible mode: Running backup_directories with defaults."
+        backup_directories
+        return 0
+    fi
     echo "1) Backup Directories"
     echo "2) Decrypt Backup"
     echo "3) Exit Backup Menu"
@@ -1104,19 +1098,20 @@ function backups {
 
 function setup_splunk {
     print_banner "Installing Splunk"
-    indexer_ip=$(get_input_string "What is the Splunk forward server ip? ")
-
+    if [ "$ANSIBLE" == "true" ]; then
+        echo "[*] Ansible mode: Using default Splunk indexer IP."
+        indexer_ip="127.0.0.1"
+    else
+        indexer_ip=$(get_input_string "What is the Splunk forward server ip? ")
+    fi
     wget $GITHUB_URL/splunk/splunk.sh --no-check-certificate
     chmod +x splunk.sh
     ./splunk.sh -f $indexer_ip
 }
 
-
 ##################### ADDITIONAL WEB HARDENING FUNCTIONS #####################
-
 function backup_databases {
     print_banner "Hardening Databases"
-    # Check if MySQL/MariaDB is active and if default (empty) root login works.
     sudo service mysql status >/dev/null 2>&1
     if [ $? -eq 0 ]; then
         echo "[+] mysql/mariadb is active!"
@@ -1132,14 +1127,11 @@ function backup_databases {
             sudo rm backup.sql
         fi
     fi
-
-    # Check if PostgreSQL is active
     sudo service postgresql status >/dev/null 2>&1
     if [ $? -eq 0 ]; then
         echo "[+] PostgreSQL is active!"
     fi
 }
-
 
 function secure_php_ini {
     print_banner "Securing php.ini Files"
@@ -1161,8 +1153,6 @@ function secure_php_ini {
 
 function secure_ssh {
     print_banner "Securing SSH"
-
-    # Determine the SSH service name.
     if sudo service sshd status > /dev/null 2>&1; then
         service_name="sshd"
     elif sudo service ssh status > /dev/null 2>&1; then
@@ -1171,31 +1161,21 @@ function secure_ssh {
         echo "[*] SSH service not found. Skipping SSH hardening."
         return
     fi
-
     config_file="/etc/ssh/sshd_config"
     if [ ! -f "$config_file" ]; then
         echo "[X] ERROR: SSH configuration file not found: $config_file"
         return
     fi
-
-    # Apply SSH hardening settings.
-    # Enable root login and disable public-key authentication for root.
     sudo sed -i '1s;^;PermitRootLogin yes\n;' "$config_file"
     sudo sed -i '1s;^;PubkeyAuthentication no\n;' "$config_file"
-
-    # For non-RedHat systems, disable PAM in sshd_config.
     if ! grep -qi "REDHAT_" /etc/os-release; then
         sudo sed -i '1s;^;UsePAM no\n;' "$config_file"
     fi
-
     sudo sed -i '1s;^;UseDNS no\n;' "$config_file"
     sudo sed -i '1s;^;PermitEmptyPasswords no\n;' "$config_file"
     sudo sed -i '1s;^;AddressFamily inet\n;' "$config_file"
     sudo sed -i '1s;^;Banner none\n;' "$config_file"
-
-    # Test the SSH configuration.
     if sudo sshd -t; then
-        # Restart the SSH service.
         if command -v systemctl >/dev/null 2>&1; then
             sudo systemctl restart "$service_name"
         else
@@ -1212,12 +1192,9 @@ function install_modsecurity {
     local ipt
     ipt=$(command -v iptables || command -v /sbin/iptables || command -v /usr/sbin/iptables)
     sudo $ipt -P OUTPUT ACCEPT
-
     if command -v yum >/dev/null; then
-        # RHEL-based systems (not implemented in this snippet)
         echo "RHEL-based ModSecurity installation not implemented"
     elif command -v apt-get >/dev/null; then
-        # Debian/Ubuntu (and other Debian-based) systems
         sudo apt-get update
         sudo apt-get -y install libapache2-mod-security2
         sudo a2enmod security2
@@ -1225,24 +1202,18 @@ function install_modsecurity {
         sudo sed -i 's/SecRuleEngine DetectionOnly/SecRuleEngine On/g' /etc/modsecurity/modsecurity.conf
         sudo systemctl restart apache2
     elif command -v apk >/dev/null; then
-        # Alpine-based systems (not implemented in this snippet)
         echo "Alpine-based ModSecurity installation not implemented"
     else
         echo "Unsupported distribution for ModSecurity installation"
         exit 1
     fi
-
     sudo $ipt -P OUTPUT DROP
 }
 
 function remove_profiles {
     print_banner "Removing Profile Files"
-    # Back up system-wide profile files
     sudo mv /etc/prof{i,y}le.d /etc/profile.d.bak 2>/dev/null
     sudo mv /etc/prof{i,y}le /etc/profile.bak 2>/dev/null
-
-    # Remove user-specific profile files from /home and /root,
-    # excluding critical accounts (root, ccdcuser1, and ccdcuser2)
     for f in ".profile" ".bashrc" ".bash_login"; do
         sudo find /home /root \( -path "/root/*" -o -path "/home/ccdcuser1/*" -o -path "/home/ccdcuser2/*" \) -prune -o -name "$f" -exec sudo rm {} \;
     done
@@ -1253,7 +1224,6 @@ function fix_pam {
     local ipt
     ipt=$(command -v iptables || command -v /sbin/iptables || command -v /usr/sbin/iptables)
     sudo $ipt -P OUTPUT ACCEPT
-
     if command -v yum >/dev/null; then
         if command -v authconfig >/dev/null; then
             sudo authconfig --updateall
@@ -1284,7 +1254,6 @@ function fix_pam {
     else
         echo "Unknown OS, not fixing PAM"
     fi
-
     sudo $ipt -P OUTPUT DROP
 }
 
@@ -1316,10 +1285,7 @@ function remove_unused_packages {
 
 function patch_vulnerabilities {
     print_banner "Patching Vulnerabilities"
-    # Patch pwnkit vulnerability
     sudo chmod 0755 /usr/bin/pkexec
-
-    # Patch CVE-2023-32233 vulnerability
     sudo sysctl -w kernel.unprivileged_userns_clone=0
     echo "kernel.unprivileged_userns_clone = 0" | sudo tee -a /etc/sysctl.conf >/dev/null
     sudo sysctl -p >/dev/null
@@ -1331,16 +1297,12 @@ function check_permissions {
     sudo chown root:root /etc/passwd
     sudo chmod 640 /etc/shadow
     sudo chmod 644 /etc/passwd
-
     echo "[+] SUID binaries:"
     sudo find / -perm -4000 2>/dev/null
-
     echo "[+] Directories with 777 permissions (max depth 3):"
     sudo find / -maxdepth 3 -type d -perm -777 2>/dev/null
-
     echo "[+] Files with capabilities:"
     sudo getcap -r / 2>/dev/null
-
     echo "[+] Files with extended ACLs in critical directories:"
     sudo getfacl -sR /etc/ /usr/ /root/
 }
@@ -1368,13 +1330,15 @@ function sysctl_config {
     echo "fs.protected_fifos = 2" | sudo tee -a "$file" >/dev/null
     echo "fs.protected_regular = 2" | sudo tee -a "$file" >/dev/null
     echo "kernel.kptr_restrict = 2" | sudo tee -a "$file" >/dev/null
-
     sudo sysctl -p >/dev/null
 }
 
-# my_secure_sql_installation
 function my_secure_sql_installation {
     print_banner "My Secure SQL Installation"
+    if [ "$ANSIBLE" == "true" ]; then
+        echo "[*] Ansible mode: Skipping mysql_secure_installation."
+        return 0
+    fi
     read -p "Would you like to run mysql_secure_installation? (y/N): " sql_choice
     if [[ "$sql_choice" == "y" || "$sql_choice" == "Y" ]]; then
          echo "[*] Running mysql_secure_installation..."
@@ -1385,29 +1349,9 @@ function my_secure_sql_installation {
 }
 
 # FUNCTION: manage_web_immutability
-# This function scans for default critical web directories (e.g., /etc/nginx, /etc/apache2, /var/www, etc.),
-# lists any that are found, and then prompts the user to either set the immutable flag (chattr +i) on these directories,
-# or to remove the immutable flag (chattr -i). This applies only to production web directories.
 function manage_web_immutability {
     print_banner "Manage Web Directory Immutability"
-    
-    # List of common critical web directories (you may add or remove as needed)
-    default_web_dirs=(
-        "/etc/nginx"
-        "/etc/apache2"
-        "/usr/share/nginx"
-        "/var/www"
-        "/var/www/html"
-        "/etc/lighttpd"
-        "/etc/mysql"
-        "/etc/postgresql"
-        "/var/lib/apache2"
-        "/var/lib/mysql"
-        "/etc/redis"
-        "/etc/phpMyAdmin"
-        "/etc/php.d"
-    )
-    
+    default_web_dirs=( "/etc/nginx" "/etc/apache2" "/usr/share/nginx" "/var/www" "/var/www/html" "/etc/lighttpd" "/etc/mysql" "/etc/postgresql" "/var/lib/apache2" "/var/lib/mysql" "/etc/redis" "/etc/phpMyAdmin" "/etc/php.d" )
     detected_web_dirs=()
     echo "[*] Scanning for critical web directories..."
     for dir in "${default_web_dirs[@]}"; do
@@ -1415,37 +1359,41 @@ function manage_web_immutability {
             detected_web_dirs+=("$dir")
         fi
     done
-
     if [ ${#detected_web_dirs[@]} -eq 0 ]; then
         echo "[*] No critical web directories were found."
         return
     fi
-
     echo "[*] The following web directories have been detected:"
     for d in "${detected_web_dirs[@]}"; do
         echo "    $d"
     done
-
-    read -p "Would you like to set these directories to immutable? (y/N): " imm_choice
-    if [[ "$imm_choice" == "y" || "$imm_choice" == "Y" ]]; then
+    if [ "$ANSIBLE" == "true" ]; then
+        echo "[*] Ansible mode: Automatically setting immutable flags on detected directories."
         for d in "${detected_web_dirs[@]}"; do
             sudo chattr +i "$d"
             echo "[*] Set immutable flag on $d"
         done
     else
-        read -p "Would you like to remove the immutable flag from these directories? (y/N): " unimm_choice
-        if [[ "$unimm_choice" == "y" || "$unimm_choice" == "Y" ]]; then
+        read -p "Would you like to set these directories to immutable? (y/N): " imm_choice
+        if [[ "$imm_choice" == "y" || "$imm_choice" == "Y" ]]; then
             for d in "${detected_web_dirs[@]}"; do
-                sudo chattr -i "$d"
-                echo "[*] Removed immutable flag from $d"
+                sudo chattr +i "$d"
+                echo "[*] Set immutable flag on $d"
             done
         else
-            echo "[*] No changes made to web directory immutability."
+            read -p "Would you like to remove the immutable flag from these directories? (y/N): " unimm_choice
+            if [[ "$unimm_choice" == "y" || "$unimm_choice" == "Y" ]]; then
+                for d in "${detected_web_dirs[@]}"; do
+                    sudo chattr -i "$d"
+                    echo "[*] Removed immutable flag from $d"
+                done
+            else
+                echo "[*] No changes made to web directory immutability."
+            fi
         fi
     fi
 }
 
-# harden_web function:
 function harden_web {
     print_banner "Web Hardening Initiated"
     backup_databases
@@ -1455,10 +1403,7 @@ function harden_web {
     manage_web_immutability
 }
 
-
 ##################### ADVANCED HARDENING FUNCTIONS #####################
-
-# Function to set up a cronjob that saves iptables rules persistently.
 function setup_iptables_cronjob {
     print_banner "Setting Up Iptables Persistence Cronjob"
     if grep -qi 'fedora\|centos\|rhel' /etc/os-release; then
@@ -1478,9 +1423,12 @@ EOF
     fi
 }
 
-# Function to disable unnecessary services (with a caution about SSH).
 function disable_unnecessary_services {
     print_banner "Disabling Unnecessary Services"
+    if [ "$ANSIBLE" == "true" ]; then
+        echo "[*] Ansible mode: Skipping disabling services."
+        return 0
+    fi
     read -p "Disable SSHD? (WARNING: may lock you out if remote) (y/N): " disable_sshd
     if [[ "$disable_sshd" =~ ^[Yy]$ ]]; then
         if systemctl is-active sshd &> /dev/null; then
@@ -1503,7 +1451,6 @@ function disable_unnecessary_services {
     fi
 }
 
-# Function to set up a cronjob that monitors open ports and re-applies iptables rules.
 function setup_firewall_maintenance_cronjob_iptables {
     print_banner "Setting Up iptables Maintenance Cronjob"
     local script_file="/usr/local/sbin/firewall_maintain.sh"
@@ -1511,7 +1458,6 @@ function setup_firewall_maintenance_cronjob_iptables {
 #!/bin/bash
 open_ports=$(ss -lnt | awk 'NR>1 {print $4}' | awk -F':' '{print $NF}' | sort -u)
 for port in $open_ports; do
-    # Check if a rule exists; if not, add one to allow TCP traffic on the port.
     iptables -C INPUT -p tcp --dport $port -j ACCEPT 2>/dev/null || iptables -A INPUT -p tcp --dport $port -j ACCEPT
 done
 EOF
@@ -1543,7 +1489,6 @@ EOF
     echo "[*] UFW maintenance cron job created."
 }
 
-
 function setup_firewall_maintenance_cronjob {
     if command -v ufw &>/dev/null && sudo ufw status | grep -q "Status: active"; then
         setup_firewall_maintenance_cronjob_ufw
@@ -1552,7 +1497,6 @@ function setup_firewall_maintenance_cronjob {
     fi
 }
 
-# Function to set up a cronjob that clears the NAT table periodically.
 function setup_nat_clear_cronjob {
     print_banner "Setting Up NAT Table Clear Cronjob"
     cron_file="/etc/cron.d/clear_nat_table"
@@ -1562,12 +1506,8 @@ EOF
     echo "[*] NAT table clear cron job created."
 }
 
-# Function to set up a cronjob that restarts the detected firewall service,
-# then offers to add additional services.
 function setup_service_restart_cronjob {
     print_banner "Setting Up Service Restart Cronjob"
-    
-    # Detect active firewall service
     detected_service=""
     if command -v ufw &>/dev/null && sudo ufw status 2>/dev/null | grep -q "Status: active"; then
         detected_service="ufw"
@@ -1578,7 +1518,6 @@ function setup_service_restart_cronjob {
     else
         echo "[*] No recognized firewall service detected automatically."
     fi
-    
     if [ -n "$detected_service" ]; then
         echo "[*] Detected firewall service: $detected_service"
         local script_file="/usr/local/sbin/restart_${detected_service}.sh"
@@ -1593,27 +1532,29 @@ EOF
 EOF
         echo "[*] Cron job created to restart $detected_service every 5 minutes."
     fi
-
-    # Offer to add additional services
-    read -p "Would you like to add additional services to restart via cronjob? (y/N): " add_extra
-    if [[ "$add_extra" =~ ^[Yy]$ ]]; then
-        while true; do
-            read -p "Enter the name of the additional service (or leave blank to finish): " extra_service
-            if [ -z "$extra_service" ]; then
-                break
-            fi
-            local extra_script_file="/usr/local/sbin/restart_${extra_service}.sh"
-            sudo bash -c "cat > $extra_script_file" <<EOF
+    if [ "$ANSIBLE" != "true" ]; then
+        read -p "Would you like to add additional services to restart via cronjob? (y/N): " add_extra
+        if [[ "$add_extra" =~ ^[Yy]$ ]]; then
+            while true; do
+                read -p "Enter the name of the additional service (or leave blank to finish): " extra_service
+                if [ -z "$extra_service" ]; then
+                    break
+                fi
+                local extra_script_file="/usr/local/sbin/restart_${extra_service}.sh"
+                sudo bash -c "cat > $extra_script_file" <<EOF
 #!/bin/bash
 systemctl restart $extra_service
 EOF
-            sudo chmod +x $extra_script_file
-            local extra_cron_file="/etc/cron.d/restart_${extra_service}"
-            sudo bash -c "cat > $extra_cron_file" <<EOF
+                sudo chmod +x $extra_script_file
+                local extra_cron_file="/etc/cron.d/restart_${extra_service}"
+                sudo bash -c "cat > $extra_cron_file" <<EOF
 */5 * * * * root $extra_script_file
 EOF
-            echo "[*] Cron job created to restart $extra_service every 5 minutes."
-        done
+                echo "[*] Cron job created to restart $extra_service every 5 minutes."
+            done
+        fi
+    else
+        echo "[*] Ansible mode: Skipping additional service restart configuration."
     fi
     echo "[*] Service restart configuration complete."
 }
@@ -1643,8 +1584,13 @@ function run_full_advanced_hardening {
     echo "[*] Full Advanced Hardening Process Completed."
 }
 
-# Modified advanced_hardening menu
+# Modified advanced_hardening menu with ansible check.
 function advanced_hardening {
+    if [ "$ANSIBLE" == "true" ]; then
+         echo "[*] Ansible mode: Running full advanced hardening non-interactively."
+         run_full_advanced_hardening
+         return 0
+    fi
     local adv_choice
     while true; do
         print_banner "Advanced Hardening & Automation #TESTING, JUST PLACEHOLDERS"
@@ -1675,6 +1621,11 @@ function advanced_hardening {
 ##################### WEB HARDENING MENU FUNCTION #####################
 function show_web_hardening_menu {
     print_banner "Web Hardening Menu"
+    if [ "$ANSIBLE" == "true" ]; then
+        echo "[*] Ansible mode: Running full web hardening non-interactively."
+        harden_web
+        return 0
+    fi
     echo "1) Run Full Web Hardening Process"
     echo "2) backup_databases"
     echo "3) secure_php_ini"
@@ -1769,7 +1720,7 @@ function show_menu {
             show_web_hardening_menu
             ;;
         9)
-            advanced_hardening   # (Assuming you’ve defined your advanced_hardening function)
+            advanced_hardening
             ;;
         10)
             echo "Exiting..."; exit 0
@@ -1803,24 +1754,33 @@ function main {
     patch_vulnerabilities
     check_permissions
     sysctl_config
-    web_choice=$(get_input_string "Would you like to perform web hardening? (y/N): ")
-    if [ "$web_choice" == "y" ]; then
-        show_web_hardening_menu
-    fi
-    adv_choice=$(get_input_string "Would you like to perform advanced hardening? (y/N): ")
-    if [ "$adv_choice" == "y" ]; then
-        advanced_hardening
+    if [ "$ANSIBLE" != "true" ]; then
+         web_choice=$(get_input_string "Would you like to perform web hardening? (y/N): ")
+         if [ "$web_choice" == "y" ]; then
+             show_web_hardening_menu
+         fi
+         adv_choice=$(get_input_string "Would you like to perform advanced hardening? (y/N): ")
+         if [ "$adv_choice" == "y" ]; then
+             advanced_hardening
+         fi
+    else
+         echo "[*] Ansible mode: Skipping interactive web and advanced hardening prompts."
     fi
     echo "[*] End of full hardening process"
     echo "[*] Script log can be viewed at $LOG"
     echo "[*] ***Please install system updates now***"
 }
+
 ##################### ARGUMENT PARSING #####################
 for arg in "$@"; do
     case "$arg" in
         --debug )
             echo "[*] Debug mode enabled"
             debug="true"
+            ;;
+        -ansible )
+            echo "[*] Ansible mode enabled: Skipping interactive prompts."
+            ANSIBLE="true"
             ;;
     esac
 done
