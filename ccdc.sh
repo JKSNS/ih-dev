@@ -531,6 +531,18 @@ function setup_custom_iptables {
     sudo iptables -A INPUT -p udp --dport 53 -j ACCEPT
     sudo iptables -A INPUT -p icmp -j ACCEPT
     sudo iptables -A OUTPUT -p icmp -j ACCEPT
+    # Allow outbound HTTPS (port 443) by default.
+    sudo iptables -A OUTPUT -p tcp --dport 443 -j ACCEPT
+
+    # Now, read the current running TCP listening ports and allow inbound traffic
+    running_ports=$(ss -lnt | awk 'NR>1 {split($4,a,":"); print a[length(a)]}' | sort -nu)
+    for port in $running_ports; do
+        # Skip port 53 (DNS) which is already allowed.
+        if [ "$port" != "53" ]; then
+            sudo iptables -A INPUT -p tcp --dport "$port" -j ACCEPT
+        fi
+    done
+
     echo "Select your DNS server option:"
     echo "  1) Use Cloudflare DNS servers (1.1.1.1, 1.0.0.1)"
     echo "  2) Use default gateway/router as your DNS server"
@@ -1448,7 +1460,7 @@ function setup_firewall_maintenance_cronjob_iptables {
     local script_file="/usr/local/sbin/firewall_maintain.sh"
     sudo bash -c "cat > $script_file" <<'EOF'
 #!/bin/bash
-open_ports=$(ss -lnt | awk 'NR>1 {print $4}' | awk -F':' '{print $NF}' | sort -u)
+open_ports=$(ss -lnt | awk 'NR>1 {split($4,a,":"); print a[length(a)]}' | sort -nu)
 for port in $open_ports; do
     iptables -C INPUT -p tcp --dport $port -j ACCEPT 2>/dev/null || iptables -A INPUT -p tcp --dport $port -j ACCEPT
 done
