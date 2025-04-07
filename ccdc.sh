@@ -1345,6 +1345,10 @@ function my_secure_sql_installation {
 
 function manage_web_immutability {
     print_banner "Manage Web Directory Immutability"
+    if [ "$ANSIBLE" == "true" ]; then
+         echo "[*] Ansible mode: Skipping immutable flag changes on web directories."
+         return 0
+    fi
     default_web_dirs=( "/etc/nginx" "/etc/apache2" "/usr/share/nginx" "/var/www" "/var/www/html" "/etc/lighttpd" "/etc/mysql" "/etc/postgresql" "/var/lib/apache2" "/var/lib/mysql" "/etc/redis" "/etc/phpMyAdmin" "/etc/php.d" )
     detected_web_dirs=()
     echo "[*] Scanning for critical web directories..."
@@ -1361,40 +1365,37 @@ function manage_web_immutability {
     for d in "${detected_web_dirs[@]}"; do
         echo "    $d"
     done
-    if [ "$ANSIBLE" == "true" ]; then
-        echo "[*] Ansible mode: Automatically setting immutable flags on detected directories."
+    read -p "Would you like to set these directories to immutable? (y/N): " imm_choice
+    if [[ "$imm_choice" == "y" || "$imm_choice" == "Y" ]]; then
         for d in "${detected_web_dirs[@]}"; do
             sudo chattr +i "$d"
             echo "[*] Set immutable flag on $d"
         done
     else
-        read -p "Would you like to set these directories to immutable? (y/N): " imm_choice
-        if [[ "$imm_choice" == "y" || "$imm_choice" == "Y" ]]; then
+        read -p "Would you like to remove the immutable flag from these directories? (y/N): " unimm_choice
+        if [[ "$unimm_choice" == "y" || "$unimm_choice" == "Y" ]]; then
             for d in "${detected_web_dirs[@]}"; do
-                sudo chattr +i "$d"
-                echo "[*] Set immutable flag on $d"
+                sudo chattr -i "$d"
+                echo "[*] Removed immutable flag from $d"
             done
         else
-            read -p "Would you like to remove the immutable flag from these directories? (y/N): " unimm_choice
-            if [[ "$unimm_choice" == "y" || "$unimm_choice" == "Y" ]]; then
-                for d in "${detected_web_dirs[@]}"; do
-                    sudo chattr -i "$d"
-                    echo "[*] Removed immutable flag from $d"
-                done
-            else
-                echo "[*] No changes made to web directory immutability."
-            fi
+            echo "[*] No changes made to web directory immutability."
         fi
     fi
 }
 
+# Modified harden_web function:
 function harden_web {
     print_banner "Web Hardening Initiated"
     backup_databases
     secure_php_ini
     install_modsecurity
-    my_secure_sql_installation
-    manage_web_immutability
+    if [ "$ANSIBLE" == "true" ]; then
+         echo "[*] Ansible mode: Skipping secure MySQL installation and web directory immutability steps."
+    else
+         my_secure_sql_installation
+         manage_web_immutability
+    fi
 }
 
 ##################### ADVANCED HARDENING FUNCTIONS #####################
@@ -1762,6 +1763,9 @@ function main {
          fi
     else
          echo "[*] Ansible mode: Skipping interactive web and advanced hardening prompts."
+         # Optionally, you can call harden_web here if you want to run web hardening non-interactively.
+         harden_web
+         advanced_hardening
     fi
     echo "[*] End of full hardening process"
     echo "[*] Script log can be viewed at $LOG"
