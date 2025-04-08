@@ -1436,29 +1436,75 @@ function install_modsecurity_docker {
 
 # Manual ModSecurity installation function (strict mode).
 # This function is available only via the menu (not run by default).
+# Manual ModSecurity installation function (Strict Mode, built from source).
+# This function is available only via the menu (not run by default).
 function install_modsecurity_manual {
-    print_banner "Manual ModSecurity Installation (Strict Mode)"
-    local ipt
-    ipt=$(command -v iptables || command -v /sbin/iptables || command -v /usr/sbin/iptables)
-    sudo $ipt -P OUTPUT ACCEPT
-    if command -v yum &>/dev/null; then
-        echo "RHEL-based manual ModSecurity installation not implemented"
-    elif command -v apt-get &>/dev/null; then
-        sudo apt-get update
-        sudo apt-get -y install libapache2-mod-security2
-        sudo a2enmod security2
-        local strict_conf
-        strict_conf=$(generate_strict_modsec_conf)
-        sudo cp "$strict_conf" /etc/modsecurity/modsecurity.conf
-        sudo sed -i 's/SecRuleEngine DetectionOnly/SecRuleEngine On/g' /etc/modsecurity/modsecurity.conf
-        sudo systemctl restart apache2
-    elif command -v apk &>/dev/null; then
-        echo "Alpine-based manual ModSecurity installation not implemented"
+    print_banner "Manual ModSecurity Installation (Strict Mode, Build from Source)"
+
+    # --- Install build dependencies based on the package manager ---
+    echo "[*] Installing build dependencies for ModSecurity..."
+    if [ "$pm" == "apt-get" ]; then
+        sudo apt-get update -y
+        sudo apt-get install -y git build-essential autoconf automake libtool pkg-config \
+             libxml2 libxml2-dev libyajl-dev libcurl4-openssl-dev doxygen
+    elif [ "$pm" == "yum" ] || [ "$pm" == "dnf" ]; then
+        sudo $pm install -y git gcc-c++ make autoconf automake libtool pkgconfig \
+             libxml2-devel yajl-devel curl-devel doxygen
+    elif [ "$pm" == "zypper" ]; then
+        sudo zypper refresh
+        sudo zypper install -y git gcc-c++ make autoconf automake libtool pkg-config \
+             libxml2-devel yajl-devel libcurl-devel doxygen
     else
-        echo "Unsupported distribution for manual ModSecurity installation"
-        exit 1
+        echo "[X] Unsupported package manager for building from source."
+        return 1
     fi
-    sudo $ipt -P OUTPUT DROP
+
+    # --- Clone (or update) the ModSecurity source code ---
+    echo "[*] Cloning/updating ModSecurity source..."
+    if [ ! -d "/usr/local/src/ModSecurity" ]; then
+        sudo git clone --depth=1 https://github.com/SpiderLabs/ModSecurity /usr/local/src/ModSecurity
+    else
+        echo "[*] ModSecurity source already exists. Updating..."
+        cd /usr/local/src/ModSecurity || { echo "[X] Cannot change directory to /usr/local/src/ModSecurity"; return 1; }
+        sudo git pull
+    fi
+
+    cd /usr/local/src/ModSecurity || { echo "[X] Cannot change directory to /usr/local/src/ModSecurity"; return 1; }
+    # Initialize and update submodules
+    sudo git submodule init
+    sudo git submodule update
+
+    # --- Build and install ModSecurity from source ---
+    echo "[*] Building ModSecurity from source..."
+    sudo ./build.sh
+    sudo ./configure
+    sudo make
+    sudo make install
+    echo "[*] ModSecurity built and installed successfully."
+
+    # --- Deploy a strict ModSecurity configuration ---
+    echo "[*] Deploying strict ModSecurity configuration..."
+    local strict_conf
+    strict_conf=$(generate_strict_modsec_conf)
+    # Ensure the target directory exists
+    sudo mkdir -p /etc/modsecurity
+    sudo cp "$strict_conf" /etc/modsecurity/modsecurity.conf
+
+    # --- Restart Apache service to load the new module (if applicable) ---
+    echo "[*] Restarting Apache to apply changes..."
+    if command -v systemctl &>/dev/null; then
+        if systemctl is-active apache2 &>/dev/null; then
+            sudo systemctl restart apache2
+        elif systemctl is-active httpd &>/dev/null; then
+            sudo systemctl restart httpd
+        else
+            echo "[WARN] Apache service not detected. Please restart your webserver manually."
+        fi
+    else
+        sudo service apache2 restart 2>/dev/null || sudo service httpd restart 2>/dev/null
+    fi
+
+    echo "[*] Manual ModSecurity installation from source completed."
 }
 
 
