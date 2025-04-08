@@ -1173,6 +1173,8 @@ function secure_php_ini {
 
 function secure_ssh {
     print_banner "Securing SSH"
+
+    # Determine SSH service name.
     if sudo service sshd status > /dev/null 2>&1; then
         service_name="sshd"
     elif sudo service ssh status > /dev/null 2>&1; then
@@ -1181,21 +1183,60 @@ function secure_ssh {
         echo "[*] SSH service not found. Skipping SSH hardening."
         return
     fi
+
     config_file="/etc/ssh/sshd_config"
     if [ ! -f "$config_file" ]; then
         echo "[X] ERROR: SSH configuration file not found: $config_file"
         return
     fi
-    sudo sed -i '1s;^;PermitRootLogin yes\n;' "$config_file"
-    sudo sed -i '1s;^;PubkeyAuthentication no\n;' "$config_file"
-    if ! grep -qi "REDHAT_" /etc/os-release; then
-        sudo sed -i '1s;^;UsePAM no\n;' "$config_file"
-    fi
-    sudo sed -i '1s;^;UseDNS no\n;' "$config_file"
-    sudo sed -i '1s;^;PermitEmptyPasswords no\n;' "$config_file"
-    sudo sed -i '1s;^;AddressFamily inet\n;' "$config_file"
-    sudo sed -i '1s;^;Banner none\n;' "$config_file"
+
+    # Backup current sshd_config
+    sudo cp "$config_file" "${config_file}.bak"
+
+    # 1. Disable Root Login
+    sudo sed -i '/^PermitRootLogin/d' "$config_file"
+    echo "PermitRootLogin no" | sudo tee -a "$config_file" >/dev/null
+
+    # 2. Allow only specific users or groups - uncomment and modify as needed.
+    # echo "AllowUsers ccdcuser1 ccdcuser2" | sudo tee -a "$config_file" >/dev/null
+    # echo "AllowGroups admin" | sudo tee -a "$config_file" >/dev/null
+
+    # 3. Deny specific users or groups - uncomment and modify as needed.
+    # echo "DenyUsers apache www-data" | sudo tee -a "$config_file" >/dev/null
+    # echo "DenyGroups somegroup" | sudo tee -a "$config_file" >/dev/null
+
+    # 4. Change SSH port if desired.
+    # echo "Port 222" | sudo tee -a "$config_file" >/dev/null
+
+    # 5. Change Login Grace Time to 1 minute.
+    sudo sed -i '/^LoginGraceTime/d' "$config_file"
+    echo "LoginGraceTime 1m" | sudo tee -a "$config_file" >/dev/null
+
+    # 6. Restrict the interface(s) via ListenAddress - uncomment and modify as needed.
+    # echo "ListenAddress 192.168.10.200" | sudo tee -a "$config_file" >/dev/null
+
+    # 7. Set SSH idle timeout (ClientAliveInterval and ClientAliveCountMax).
+    sudo sed -i '/^ClientAliveInterval/d' "$config_file"
+    sudo sed -i '/^ClientAliveCountMax/d' "$config_file"
+    echo "ClientAliveInterval 600" | sudo tee -a "$config_file" >/dev/null
+    echo "ClientAliveCountMax 0" | sudo tee -a "$config_file" >/dev/null
+
+    # Additional recommended settings:
+    # Deny empty passwords.
+    sudo sed -i '/^PermitEmptyPasswords/d' "$config_file"
+    echo "PermitEmptyPasswords no" | sudo tee -a "$config_file" >/dev/null
+
+    # Set AddressFamily to inet (IPv4 only).
+    sudo sed -i '/^AddressFamily/d' "$config_file"
+    echo "AddressFamily inet" | sudo tee -a "$config_file" >/dev/null
+
+    # Disable DNS lookups for connecting clients.
+    sudo sed -i '/^UseDNS/d' "$config_file"
+    echo "UseDNS no" | sudo tee -a "$config_file" >/dev/null
+
+    # Test SSH configuration.
     if sudo sshd -t; then
+        # Restart the SSH service.
         if command -v systemctl >/dev/null 2>&1; then
             sudo systemctl restart "$service_name"
         else
@@ -1203,7 +1244,8 @@ function secure_ssh {
         fi
         echo "[*] SSH hardening applied and $service_name restarted."
     else
-        echo "[X] ERROR: SSH configuration test failed."
+        echo "[X] ERROR: SSH configuration test failed. Restoring original configuration."
+        sudo cp "${config_file}.bak" "$config_file"
     fi
 }
 
