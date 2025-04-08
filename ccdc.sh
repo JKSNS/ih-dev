@@ -1293,13 +1293,13 @@ function secure_ssh {
     fi
 }
 
-function install_modsecurity {
-    print_banner "Installing ModSecurity"
+function install_modsecurity_manual {
+    print_banner "Manual ModSecurity Installation"
     local ipt
     ipt=$(command -v iptables || command -v /sbin/iptables || command -v /usr/sbin/iptables)
     sudo $ipt -P OUTPUT ACCEPT
     if command -v yum >/dev/null; then
-        echo "RHEL-based ModSecurity installation not implemented"
+        echo "RHEL-based manual ModSecurity installation not implemented"
     elif command -v apt-get >/dev/null; then
         sudo apt-get update
         sudo apt-get -y install libapache2-mod-security2
@@ -1308,12 +1308,36 @@ function install_modsecurity {
         sudo sed -i 's/SecRuleEngine DetectionOnly/SecRuleEngine On/g' /etc/modsecurity/modsecurity.conf
         sudo systemctl restart apache2
     elif command -v apk >/dev/null; then
-        echo "Alpine-based ModSecurity installation not implemented"
+        echo "Alpine-based manual ModSecurity installation not implemented"
     else
-        echo "Unsupported distribution for ModSecurity installation"
+        echo "Unsupported distribution for manual ModSecurity installation"
         exit 1
     fi
     sudo $ipt -P OUTPUT DROP
+}
+
+function install_modsecurity_docker {
+    print_banner "Dockerized ModSecurity Installation"
+    # Ensure Docker is installed.
+    if ! command -v docker &>/dev/null; then
+        echo "[ERROR] Docker is not available. Please install Docker first."
+        return 1
+    fi
+
+    local modsec_image="modsecurity/modsecurity:latest"
+    echo "[INFO] Pulling Docker image for ModSecurity: $modsec_image"
+    sudo docker pull "$modsec_image"
+
+    echo "[INFO] Running Dockerized ModSecurity container..."
+    # This example runs the container mapping container port 80 to host port 80.
+    sudo docker run -d --name dockerized_modsec -p 80:80 "$modsec_image"
+
+    if sudo docker ps | grep -q dockerized_modsec; then
+        echo "[*] Dockerized ModSecurity container 'dockerized_modsec' is running."
+    else
+        echo "[ERROR] Dockerized ModSecurity container failed to start."
+        return 1
+    fi
 }
 
 function remove_profiles {
@@ -1723,7 +1747,8 @@ function harden_web {
     print_banner "Web Hardening Initiated"
     backup_databases
     secure_php_ini
-    install_modsecurity
+    # Use the Dockerized ModSecurity installation by default
+    install_modsecurity_docker
     configure_apache_htaccess
     if [ "$ANSIBLE" == "true" ]; then
          echo "[*] Ansible mode: Skipping mysql_secure_installation and web directory immutability."
@@ -1732,6 +1757,7 @@ function harden_web {
          manage_web_immutability
     fi
 }
+
 
 ##################### ADVANCED HARDENING FUNCTIONS #####################
 function setup_iptables_cronjob {
@@ -1964,18 +1990,19 @@ function show_web_hardening_menu {
     echo "1) Run Full Web Hardening Process"
     echo "2) backup_databases"
     echo "3) secure_php_ini"
-    echo "4) install_modsecurity"
-    echo "5) my_secure_sql_installation"
-    echo "6) manage_web_immutability"
-    echo "7) Disable phpMyAdmin"
-    echo "8) Exit Web Hardening Menu"
-    read -p "Enter your choice [1-8]: " web_menu_choice
+    echo "4) Install ModSecurity (Dockerized) [Default]"
+    echo "5) Install ModSecurity (Manual)"
+    echo "6) my_secure_sql_installation"
+    echo "7) manage_web_immutability"
+    echo "8) Disable phpMyAdmin"
+    echo "9) Exit Web Hardening Menu"
+    read -p "Enter your choice [1-9]: " web_menu_choice
     case $web_menu_choice in
         1)
             print_banner "Web Hardening Initiated"
             backup_databases
             secure_php_ini
-            install_modsecurity
+            install_modsecurity_docker
             my_secure_sql_installation
             manage_web_immutability
             ;;
@@ -1988,22 +2015,26 @@ function show_web_hardening_menu {
             secure_php_ini
             ;;
         4)
-            print_banner "Web Hardening Initiated"
-            install_modsecurity
+            print_banner "Web Hardening Initiated (Dockerized ModSecurity)"
+            install_modsecurity_docker
             ;;
         5)
-            print_banner "Web Hardening Initiated"
-            my_secure_sql_installation
+            print_banner "Web Hardening Initiated (Manual ModSecurity)"
+            install_modsecurity_manual
             ;;
         6)
             print_banner "Web Hardening Initiated"
-            manage_web_immutability
+            my_secure_sql_installation
             ;;
         7)
+            print_banner "Web Hardening Initiated"
+            manage_web_immutability
+            ;;
+        8)
             print_banner "Disabling phpMyAdmin"
             disable_phpmyadmin
             ;;
-        8)
+        9)
             echo "[*] Exiting Web Hardening Menu"
             ;;
         *)
