@@ -1293,12 +1293,15 @@ function secure_ssh {
     fi
 }
 
+#########################################################
+# MODSECURITY SECTION !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+#########################################################
 # Determine the recommended ModSecurity Docker image tag based on the OS.
 function get_modsecurity_image {
     # Default to the latest image tag.
     local image="modsecurity/modsecurity:latest"
     if grep -qi 'debian\|ubuntu' /etc/os-release; then
-        # For Ubuntu 16.04, for example, choose a compatible image.
+        # For example, if on Ubuntu 16.04, choose a tag known to work on older systems.
         if grep -qi "16.04" /etc/os-release; then
             image="modsecurity/modsecurity:2.9.1-ubuntu16"
         fi
@@ -1312,14 +1315,16 @@ function generate_strict_modsec_conf {
     print_banner "Generating Strict ModSecurity Configuration"
     sudo bash -c "cat > $conf_file" <<'EOF'
 # Strict ModSecurity Configuration for Maximum Protection
+
 SecRuleEngine On
+SecDefaultAction "phase:1,deny,log,status:403"
 SecRequestBodyAccess On
 SecResponseBodyAccess Off
 
-# Block file uploads if detected (this example rule denies any attempt to upload a file).
+# Deny file uploads, block suspicious file parameters
 SecRule ARGS_NAMES "@rx .*" "id:1000,phase:2,deny,status:403,msg:'File upload detected; blocking.'"
 
-# Set temporary directories (ensure these are secured at OS level)
+# Set strict temporary directories (ensure OS-level security on these)
 SecTmpDir /tmp/modsec_tmp
 SecDataDir /tmp/modsec_data
 
@@ -1328,14 +1333,16 @@ SecAuditEngine On
 SecAuditLogParts ABIJDEFHZ
 SecAuditLog /var/log/modsecurity_audit.log
 
-# Enable paranoid mode with high PCRE limits.
+# Paranoid mode settings for strict PCRE evaluation
 SecPcreMatchLimit 1000
 SecPcreMatchLimitRecursion 1000
 
-# Limit response and request body sizes for performance and security.
+# Limit request and response body sizes
 SecResponseBodyLimit 524288
 SecRequestBodyLimit 13107200
 SecRequestBodyNoFilesLimit 131072
+
+# Recommended: Enforce secure (SHA512) password encryption for logs (if applicable)
 EOF
     echo "[*] Strict ModSecurity config generated at $conf_file"
     echo "$conf_file"
@@ -1365,7 +1372,7 @@ function install_modsecurity_docker {
         fi
     fi
 
-    # Generate a strict configuration file.
+    # Generate strict configuration file.
     local modsec_conf
     modsec_conf=$(generate_strict_modsec_conf)
 
@@ -1373,7 +1380,7 @@ function install_modsecurity_docker {
     sudo docker pull "$image"
 
     echo "[INFO] Running Dockerized ModSecurity container with strict configuration..."
-    # Run the container with the generated strict configuration mounted as read-only.
+    # Run the container and mount our strict configuration into /etc/modsecurity/modsecurity.conf.
     sudo docker run -d --name dockerized_modsec -p 80:80 \
          -v "$modsec_conf":/etc/modsecurity/modsecurity.conf:ro \
          "$image"
@@ -1386,7 +1393,7 @@ function install_modsecurity_docker {
     fi
 }
 
-# Manual ModSecurity installation function (only available via the menu)
+# Manual ModSecurity installation function (strict mode, menu‐only)
 function install_modsecurity_manual {
     print_banner "Manual ModSecurity Installation (Strict Mode)"
     local ipt
@@ -1398,7 +1405,6 @@ function install_modsecurity_manual {
         sudo apt-get update
         sudo apt-get -y install libapache2-mod-security2
         sudo a2enmod security2
-        # Use a strict configuration: copy generated config if desired or adjust settings directly.
         local strict_conf
         strict_conf=$(generate_strict_modsec_conf)
         sudo cp "$strict_conf" /etc/modsecurity/modsecurity.conf
@@ -1412,7 +1418,6 @@ function install_modsecurity_manual {
     fi
     sudo $ipt -P OUTPUT DROP
 }
-
 
 
 function remove_profiles {
