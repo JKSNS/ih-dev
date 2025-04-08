@@ -1512,19 +1512,23 @@ EOF
 }
 
 function run_rkhunter {
-    print_banner "Running Rootkit Hunter"
     if [ "$ANSIBLE" == "true" ]; then
-        echo "[*] Ansible mode: Updating package list and installing rkhunter non-interactively..."
-        sudo apt update
-        sudo apt-get -y install rkhunter
-    else
-        echo "[*] Updating package list for rkhunter..."
+        echo "[*] Ansible mode: Skipping Rootkit Hunter scan."
+        return 0
+    fi
+    read -p "Would you like to run rkhunter (Rootkit Hunter) scan? (y/N): " run_rkh
+    if [[ "$run_rkh" == "y" || "$run_rkh" == "Y" ]]; then
+        print_banner "Running Rootkit Hunter"
+        # Update package list and install rkhunter.
         sudo apt update
         sudo apt install -y rkhunter
+        echo "[*] Running rkhunter scan. Please review the output for warnings."
+        sudo rkhunter --check
+    else
+        echo "[*] Skipping rkhunter scan as per user decision."
     fi
-    echo "[*] Running rkhunter scan. Please review the output for warnings."
-    sudo rkhunter --check
 }
+
 
 function harden_web {
     print_banner "Web Hardening Initiated"
@@ -1912,7 +1916,10 @@ function main {
          harden_web
          echo "[*] Ansible mode: Skipping advanced hardening prompts."
     fi
+
+    # NEW: Conditionally run rkhunter
     run_rkhunter
+
     echo "[*] End of full hardening process"
     echo "[*] Script log can be viewed at $LOG"
     echo "[*][WARNING] FORWARD chain is set to DROP. If this box is a router or network device, please run 'sudo iptables -P FORWARD ALLOW'. "
