@@ -1293,8 +1293,102 @@ function secure_ssh {
     fi
 }
 
+# Determine the recommended ModSecurity Docker image tag based on the OS.
+function get_modsecurity_image {
+    # Default to the latest image tag.
+    local image="modsecurity/modsecurity:latest"
+    if grep -qi 'debian\|ubuntu' /etc/os-release; then
+        # For Ubuntu 16.04, for example, choose a compatible image.
+        if grep -qi "16.04" /etc/os-release; then
+            image="modsecurity/modsecurity:2.9.1-ubuntu16"
+        fi
+    fi
+    echo "$image"
+}
+
+# Generate a strict (maximum security) ModSecurity configuration file.
+function generate_strict_modsec_conf {
+    local conf_file="/tmp/modsecurity_strict.conf"
+    print_banner "Generating Strict ModSecurity Configuration"
+    sudo bash -c "cat > $conf_file" <<'EOF'
+# Strict ModSecurity Configuration for Maximum Protection
+SecRuleEngine On
+SecRequestBodyAccess On
+SecResponseBodyAccess Off
+
+# Block file uploads if detected (this example rule denies any attempt to upload a file).
+SecRule ARGS_NAMES "@rx .*" "id:1000,phase:2,deny,status:403,msg:'File upload detected; blocking.'"
+
+# Set temporary directories (ensure these are secured at OS level)
+SecTmpDir /tmp/modsec_tmp
+SecDataDir /tmp/modsec_data
+
+# Increase audit logging for critical events
+SecAuditEngine On
+SecAuditLogParts ABIJDEFHZ
+SecAuditLog /var/log/modsecurity_audit.log
+
+# Enable paranoid mode with high PCRE limits.
+SecPcreMatchLimit 1000
+SecPcreMatchLimitRecursion 1000
+
+# Limit response and request body sizes for performance and security.
+SecResponseBodyLimit 524288
+SecRequestBodyLimit 13107200
+SecRequestBodyNoFilesLimit 131072
+EOF
+    echo "[*] Strict ModSecurity config generated at $conf_file"
+    echo "$conf_file"
+}
+
+# Dockerized ModSecurity installation function (runs by default)
+function install_modsecurity_docker {
+    print_banner "Dockerized ModSecurity Installation (Strict Mode)"
+    # Ensure Docker is available.
+    if ! command -v docker &>/dev/null; then
+        echo "[ERROR] Docker is not installed. Please install Docker first."
+        return 1
+    fi
+
+    local image
+    if [ "$ANSIBLE" == "true" ]; then
+        image=$(get_modsecurity_image)
+        echo "[*] Ansible mode: Using recommended ModSecurity Docker image: $image"
+    else
+        local default_image
+        default_image=$(get_modsecurity_image)
+        read -p "Enter ModSecurity Docker image to use [default: $default_image]: " user_image
+        if [ -n "$user_image" ]; then
+            image="$user_image"
+        else
+            image="$default_image"
+        fi
+    fi
+
+    # Generate a strict configuration file.
+    local modsec_conf
+    modsec_conf=$(generate_strict_modsec_conf)
+
+    echo "[INFO] Pulling Docker image: $image"
+    sudo docker pull "$image"
+
+    echo "[INFO] Running Dockerized ModSecurity container with strict configuration..."
+    # Run the container with the generated strict configuration mounted as read-only.
+    sudo docker run -d --name dockerized_modsec -p 80:80 \
+         -v "$modsec_conf":/etc/modsecurity/modsecurity.conf:ro \
+         "$image"
+
+    if sudo docker ps | grep -q dockerized_modsec; then
+        echo "[*] Dockerized ModSecurity container 'dockerized_modsec' is running with strict settings."
+    else
+        echo "[ERROR] Dockerized ModSecurity container failed to start."
+        return 1
+    fi
+}
+
+# Manual ModSecurity installation function (only available via the menu)
 function install_modsecurity_manual {
-    print_banner "Manual ModSecurity Installation"
+    print_banner "Manual ModSecurity Installation (Strict Mode)"
     local ipt
     ipt=$(command -v iptables || command -v /sbin/iptables || command -v /usr/sbin/iptables)
     sudo $ipt -P OUTPUT ACCEPT
@@ -1304,7 +1398,10 @@ function install_modsecurity_manual {
         sudo apt-get update
         sudo apt-get -y install libapache2-mod-security2
         sudo a2enmod security2
-        sudo cp /etc/modsecurity/modsecurity.conf-recommended /etc/modsecurity/modsecurity.conf
+        # Use a strict configuration: copy generated config if desired or adjust settings directly.
+        local strict_conf
+        strict_conf=$(generate_strict_modsec_conf)
+        sudo cp "$strict_conf" /etc/modsecurity/modsecurity.conf
         sudo sed -i 's/SecRuleEngine DetectionOnly/SecRuleEngine On/g' /etc/modsecurity/modsecurity.conf
         sudo systemctl restart apache2
     elif command -v apk >/dev/null; then
@@ -1316,29 +1413,7 @@ function install_modsecurity_manual {
     sudo $ipt -P OUTPUT DROP
 }
 
-function install_modsecurity_docker {
-    print_banner "Dockerized ModSecurity Installation"
-    # Ensure Docker is installed.
-    if ! command -v docker &>/dev/null; then
-        echo "[ERROR] Docker is not available. Please install Docker first."
-        return 1
-    fi
 
-    local modsec_image="modsecurity/modsecurity:latest"
-    echo "[INFO] Pulling Docker image for ModSecurity: $modsec_image"
-    sudo docker pull "$modsec_image"
-
-    echo "[INFO] Running Dockerized ModSecurity container..."
-    # This example runs the container mapping container port 80 to host port 80.
-    sudo docker run -d --name dockerized_modsec -p 80:80 "$modsec_image"
-
-    if sudo docker ps | grep -q dockerized_modsec; then
-        echo "[*] Dockerized ModSecurity container 'dockerized_modsec' is running."
-    else
-        echo "[ERROR] Dockerized ModSecurity container failed to start."
-        return 1
-    fi
-}
 
 function remove_profiles {
     print_banner "Removing Profile Files"
