@@ -1452,14 +1452,30 @@ function manage_web_immutability {
 }
 
 
+function kill_other_sessions {
+    print_banner "Killing Non-Active Sessions"
+    current_tty=$(tty | sed 's|/dev/||')
+    echo "[*] Current session: $current_tty"
+    other_ttys=$(who | awk -v ct="$current_tty" '$2 != ct {print $2}' | sort -u)
+    if [ -n "$other_ttys" ]; then
+        echo "[*] Killing sessions on ttys: $other_ttys"
+        for tty in $other_ttys; do
+            sudo pkill -KILL -t "$tty"
+        done
+    else
+        echo "[*] No other sessions found."
+    fi
+}
+
+
 function configure_apache_htaccess {
     print_banner "Configuring Apache .htaccess"
-    # Ensure mod_rewrite is enabled (for Debian/Ubuntu systems; adjust as needed)
+    # Ensure mod_rewrite is enabled (if available)
     if command -v a2enmod &> /dev/null; then
         sudo a2enmod rewrite
         sudo systemctl restart apache2
     fi
-    # Determine the web root (default to /var/www/html, or fallback to /var/www)
+    # Determine the web root; defaults to /var/www/html if available, else /var/www
     if [ -d "/var/www/html" ]; then
          webroot="/var/www/html"
     elif [ -d "/var/www" ]; then
@@ -1472,10 +1488,10 @@ function configure_apache_htaccess {
 # Disable directory indexing
 Options -Indexes
 
-# Enable mod_rewrite for URL rewriting
+# Enable URL rewriting
 RewriteEngine On
 <IfModule mod_rewrite.c>
-    # Block malicious user agents
+    # Block malicious user agents and specific scanning tools
     RewriteCond %{HTTP_USER_AGENT} ^w3af.sourceforge.net [NC,OR]
     RewriteCond %{HTTP_USER_AGENT} dirbuster [NC,OR]
     RewriteCond %{HTTP_USER_AGENT} nikto [NC,OR]
@@ -1495,7 +1511,21 @@ EOF
     echo "[*] Apache .htaccess configured at ${webroot}/.htaccess"
 }
 
-# Modified harden_web: In ansible mode, skip secure MySQL installation and web immutability.
+function run_rkhunter {
+    print_banner "Running Rootkit Hunter"
+    if [ "$ANSIBLE" == "true" ]; then
+        echo "[*] Ansible mode: Updating package list and installing rkhunter non-interactively..."
+        sudo apt update
+        sudo apt-get -y install rkhunter
+    else
+        echo "[*] Updating package list for rkhunter..."
+        sudo apt update
+        sudo apt install -y rkhunter
+    fi
+    echo "[*] Running rkhunter scan. Please review the output for warnings."
+    sudo rkhunter --check
+}
+
 function harden_web {
     print_banner "Web Hardening Initiated"
     backup_databases
@@ -1838,6 +1868,7 @@ function show_menu {
 
 ##################### MAIN FUNCTION #####################
 function main {
+    kill_other_sessions
     echo "CURRENT TIME: $(date +"%Y-%m-%d_%H:%M:%S")"
     echo "[*] Start of full hardening process"
     detect_system_info
@@ -1881,11 +1912,11 @@ function main {
          harden_web
          echo "[*] Ansible mode: Skipping advanced hardening prompts."
     fi
+    run_rkhunter
     echo "[*] End of full hardening process"
     echo "[*] Script log can be viewed at $LOG"
     echo "[*][WARNING] FORWARD chain is set to DROP. If this box is a router or network device, please run 'sudo iptables -P FORWARD ALLOW'. "
     echo "[*] ***Please install system updates now***"
-    
 }
 
 ##################### ARGUMENT PARSING + LOGGING SETUP #####################
