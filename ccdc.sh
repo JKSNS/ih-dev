@@ -1634,6 +1634,28 @@ function check_service_integrity {
     fi
 }
 
+function disable_phpmyadmin {
+    print_banner "Disabling phpMyAdmin"
+
+    # List of common phpMyAdmin directories
+    local phpmyadmin_dirs=( "/etc/phpmyadmin" "/usr/share/phpmyadmin" "/var/www/phpmyadmin" "/var/www/html/phpmyadmin" "/usr/local/phpmyadmin" )
+    for loc in "${phpmyadmin_dirs[@]}"; do
+        if [ -d "$loc" ]; then
+            sudo mv "$loc" "${loc}_disabled"
+            echo "[*] Renamed directory $loc to ${loc}_disabled"
+        fi
+    done
+
+    # List of common phpMyAdmin configuration files
+    local phpmyadmin_configs=( "/etc/httpd/conf.d/phpMyAdmin.conf" "/etc/apache2/conf-enabled/phpmyadmin.conf" )
+    for file in "${phpmyadmin_configs[@]}"; do
+        if [ -f "$file" ]; then
+            sudo mv "$file" "${file}.disabled"
+            echo "[*] Renamed configuration file $file to ${file}.disabled"
+        fi
+    done
+}
+
 
 function configure_apache_htaccess {
     print_banner "Configuring Apache .htaccess"
@@ -1929,12 +1951,14 @@ function advanced_hardening {
 }
 
 
+
 ##################### WEB HARDENING MENU FUNCTION #####################
 function show_web_hardening_menu {
     print_banner "Web Hardening Menu"
     if [ "$ANSIBLE" == "true" ]; then
         echo "[*] Ansible mode: Running full web hardening non-interactively."
         harden_web
+        disable_phpmyadmin
         return 0
     fi
     echo "1) Run Full Web Hardening Process"
@@ -1943,8 +1967,9 @@ function show_web_hardening_menu {
     echo "4) install_modsecurity"
     echo "5) my_secure_sql_installation"
     echo "6) manage_web_immutability"
-    echo "7) Exit Web Hardening Menu"
-    read -p "Enter your choice [1-7]: " web_menu_choice
+    echo "7) Disable phpMyAdmin"
+    echo "8) Exit Web Hardening Menu"
+    read -p "Enter your choice [1-8]: " web_menu_choice
     case $web_menu_choice in
         1)
             print_banner "Web Hardening Initiated"
@@ -1975,6 +2000,10 @@ function show_web_hardening_menu {
             manage_web_immutability
             ;;
         7)
+            print_banner "Disabling phpMyAdmin"
+            disable_phpmyadmin
+            ;;
+        8)
             echo "[*] Exiting Web Hardening Menu"
             ;;
         *)
@@ -1982,6 +2011,7 @@ function show_web_hardening_menu {
             ;;
     esac
 }
+
 
 ##################### MAIN MENU FUNCTION #####################
 function show_menu {
@@ -2076,6 +2106,10 @@ function main {
     sysctl_config
     configure_login_banner
     defend_against_forkbomb
+
+    # Disable phpMyAdmin by default for both Ansible and non-interactive execution.
+    disable_phpmyadmin
+
     if [ "$ANSIBLE" != "true" ]; then
          web_choice=$(get_input_string "Would you like to perform web hardening? (y/N): ")
          if [ "$web_choice" == "y" ]; then
@@ -2091,13 +2125,14 @@ function main {
          echo "[*] Ansible mode: Skipping advanced hardening prompts."
     fi
     run_rkhunter
-    # NEW: Check integrity of service binaries after running rkhunter.
     check_service_integrity
     echo "[*] End of full hardening process"
     echo "[*] Script log can be viewed at $LOG"
     echo "[*][WARNING] FORWARD chain is set to DROP. If this box is a router or network device, please run 'sudo iptables -P FORWARD ALLOW'."
     echo "[*] ***Please install system updates now***"
 }
+
+
 
 
 
