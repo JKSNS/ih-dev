@@ -1589,6 +1589,50 @@ function defend_against_forkbomb {
     fi
 }
 
+function check_service_integrity {
+    print_banner "Checking Service Binary Integrity"
+    if grep -qi 'debian\|ubuntu' /etc/os-release; then
+        # Ensure debsums is installed.
+        if ! command -v debsums &>/dev/null; then
+            echo "[*] Installing debsums..."
+            sudo apt-get install -y debsums
+        fi
+        local packages=("apache2" "openssh-server" "mysql-server" "postfix" "nginx")
+        for pkg in "${packages[@]}"; do
+            if dpkg -s "$pkg" &>/dev/null; then
+                echo "[*] Checking integrity for package: $pkg"
+                # Run debsums and filter lines indicating failures.
+                results=$(sudo debsums "$pkg" 2>/dev/null | grep "FAILED")
+                if [ -n "$results" ]; then
+                    echo "[WARNING] Integrity check FAILED for $pkg:"
+                    echo "$results"
+                else
+                    echo "[*] $pkg passed integrity check."
+                fi
+            else
+                echo "[*] Package $pkg is not installed; skipping."
+            fi
+        done
+    elif grep -qi 'fedora\|centos\|rhel' /etc/os-release; then
+        local packages=("httpd" "openssh" "mariadb-server" "postfix" "nginx")
+        for pkg in "${packages[@]}"; do
+            if rpm -q "$pkg" &>/dev/null; then
+                echo "[*] Checking integrity for package: $pkg"
+                results=$(rpm -V "$pkg")
+                if [ -n "$results" ]; then
+                    echo "[WARNING] Integrity check FAILED for $pkg:"
+                    echo "$results"
+                else
+                    echo "[*] $pkg passed integrity check."
+                fi
+            else
+                echo "[*] Package $pkg is not installed; skipping."
+            fi
+        done
+    else
+        echo "[X] Unsupported OS for native binary integrity checking."
+    fi
+}
 
 
 function configure_apache_htaccess {
@@ -1863,8 +1907,10 @@ function advanced_hardening {
         echo "5) Set up cronjob to clear NAT table"
         echo "6) Set up cronjob to restart firewall service and additional services"
         echo "7) Reset Advanced Hardening Configurations"
-        echo "8) Exit Advanced Hardening Menu"
-        read -p "Enter your choice [1-8]: " adv_choice
+        echo "8) Run rkhunter scan"
+        echo "9) Check Service Integrity"    # NEW ITEM
+        echo "10) Exit Advanced Hardening Menu"
+        read -p "Enter your choice [1-10]: " adv_choice
         case $adv_choice in
             1) run_full_advanced_hardening ;;
             2) setup_iptables_cronjob ;;
@@ -1873,12 +1919,15 @@ function advanced_hardening {
             5) setup_nat_clear_cronjob ;;
             6) setup_service_restart_cronjob ;;
             7) reset_advanced_hardening ;;
-            8) echo "[*] Exiting advanced hardening menu."; break ;;
+            8) run_rkhunter ;;
+            9) check_service_integrity ;;   # CALL NEW FUNCTION
+            10) echo "[*] Exiting advanced hardening menu."; break ;;
             *) echo "[X] Invalid option." ;;
         esac
         echo ""
     done
 }
+
 
 ##################### WEB HARDENING MENU FUNCTION #####################
 function show_web_hardening_menu {
@@ -2025,13 +2074,8 @@ function main {
     patch_vulnerabilities
     check_permissions
     sysctl_config
-
-    # Configure login banner for both regular and Ansible modes.
     configure_login_banner
-
-    # Defend against fork bombing.
     defend_against_forkbomb
-
     if [ "$ANSIBLE" != "true" ]; then
          web_choice=$(get_input_string "Would you like to perform web hardening? (y/N): ")
          if [ "$web_choice" == "y" ]; then
@@ -2046,10 +2090,9 @@ function main {
          harden_web
          echo "[*] Ansible mode: Skipping advanced hardening prompts."
     fi
-
-    # Run rkhunter scan conditionally (prompt only if not in Ansible mode).
     run_rkhunter
-
+    # NEW: Check integrity of service binaries after running rkhunter.
+    check_service_integrity
     echo "[*] End of full hardening process"
     echo "[*] Script log can be viewed at $LOG"
     echo "[*][WARNING] FORWARD chain is set to DROP. If this box is a router or network device, please run 'sudo iptables -P FORWARD ALLOW'."
