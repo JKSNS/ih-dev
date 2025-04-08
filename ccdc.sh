@@ -1383,22 +1383,26 @@ EOF
 
 # Dockerized ModSecurity installation function.
 # This function is run by default in both regular and Ansible executions.
+# Dockerized ModSecurity installation function.
 function install_modsecurity_docker {
     print_banner "Dockerized ModSecurity Installation (Strict Mode)"
+    
     # Ensure Docker is installed (auto-install if necessary)
     if ! ensure_docker_installed; then
         echo "[X] Could not install Docker automatically. Aborting."
         return 1
     fi
 
-    # Determine the Docker image; in Ansible mode, use the recommended image automatically.
+    # Determine the recommended ModSecurity Docker image tag based on the OS.
+    local default_image
+    default_image=$(get_modsecurity_image)
+    
+    # In Ansible mode, use the recommended image automatically; otherwise allow user override.
     local image
     if [ "$ANSIBLE" == "true" ]; then
-        image=$(get_modsecurity_image)
+        image="$default_image"
         echo "[*] Ansible mode: Using recommended ModSecurity Docker image: $image"
     else
-        local default_image
-        default_image=$(get_modsecurity_image)
         read -p "Enter ModSecurity Docker image to use [default: $default_image]: " user_image
         if [ -n "$user_image" ]; then
             image="$user_image"
@@ -1407,28 +1411,28 @@ function install_modsecurity_docker {
         fi
     fi
 
-    # Generate the strict configuration file.
+    # Generate the strict configuration file for ModSecurity.
     local modsec_conf
     modsec_conf=$(generate_strict_modsec_conf)
 
-    # Pull the Docker image.
     echo "[INFO] Pulling Docker image: $image"
     sudo docker pull "$image"
 
-    # Run the container with the strict configuration mounted read-only.
-    echo "[INFO] Running Dockerized ModSecurity container with strict settings..."
+    echo "[INFO] Running Dockerized ModSecurity container with strict configuration..."
+    # Run the container with port mapping (adjust if needed) and mount the strict config file as read-only.
     sudo docker run -d --name dockerized_modsec -p 80:80 \
          -v "$modsec_conf":/etc/modsecurity/modsecurity.conf:ro \
          "$image"
 
     if sudo docker ps | grep -q dockerized_modsec; then
-        echo "[*] Dockerized ModSecurity container 'dockerized_modsec' is running with strict configuration."
+        echo "[*] Dockerized ModSecurity container 'dockerized_modsec' is running with strict settings."
         return 0
     else
         echo "[X] Dockerized ModSecurity container failed to start."
         return 1
     fi
 }
+
 
 # Manual ModSecurity installation function (strict mode).
 # This function is available only via the menu (not run by default).
