@@ -1294,17 +1294,46 @@ function secure_ssh {
 }
 
 #########################################################
-# MODSECURITY SECTION !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+# MODSECURITY SECTION
 #########################################################
+
 # Determine the recommended ModSecurity Docker image tag based on the OS.
+# Supports Ubuntu (14,16,18,20,22), CentOS (6,7,8,9), Debian (7–12), Fedora (25–35),
+# and OpenSUSE (Leap and Tumbleweed). If no explicit mapping exists, falls back to 'latest'.
 function get_modsecurity_image {
-    # Default to the latest image tag.
-    local image="modsecurity/modsecurity:latest"
-    if grep -qi 'debian\|ubuntu' /etc/os-release; then
-        # For example, if on Ubuntu 16.04, choose a tag known to work on older systems.
-        if grep -qi "16.04" /etc/os-release; then
-            image="modsecurity/modsecurity:2.9.1-ubuntu16"
-        fi
+    # Source OS info
+    if [ -f /etc/os-release ]; then
+        . /etc/os-release
+    fi
+    distro=$(echo "$ID" | tr '[:upper:]' '[:lower:]')
+    version_major=$(echo "$VERSION_ID" | cut -d. -f1)
+
+    # Define mappings for various distributions
+    declare -A modsec_map_ubuntu=( ["14"]="modsecurity/modsecurity:ubuntu14.04" ["16"]="modsecurity/modsecurity:ubuntu16.04" ["18"]="modsecurity/modsecurity:ubuntu18.04" ["20"]="modsecurity/modsecurity:ubuntu20.04" ["22"]="modsecurity/modsecurity:ubuntu22.04" )
+    declare -A modsec_map_centos=( ["6"]="modsecurity/modsecurity:centos6" ["7"]="modsecurity/modsecurity:centos7" ["8"]="modsecurity/modsecurity:centos8" ["9"]="modsecurity/modsecurity:centos:stream9" )
+    declare -A modsec_map_debian=( ["7"]="modsecurity/modsecurity:debian7" ["8"]="modsecurity/modsecurity:debian8" ["9"]="modsecurity/modsecurity:debian9" ["10"]="modsecurity/modsecurity:debian10" ["11"]="modsecurity/modsecurity:debian11" ["12"]="modsecurity/modsecurity:debian12" )
+    declare -A modsec_map_fedora=( ["25"]="modsecurity/modsecurity:fedora25" ["26"]="modsecurity/modsecurity:fedora26" ["27"]="modsecurity/modsecurity:fedora27" ["28"]="modsecurity/modsecurity:fedora28" ["29"]="modsecurity/modsecurity:fedora29" ["30"]="modsecurity/modsecurity:fedora30" ["31"]="modsecurity/modsecurity:fedora31" ["35"]="modsecurity/modsecurity:fedora35" )
+
+    # OpenSUSE: check PRETTY_NAME for a keyword match
+    if [[ "$PRETTY_NAME" =~ Tumbleweed ]]; then
+         echo "modsecurity/modsecurity:opensuse-tumbleweed"
+         return 0
+    elif [[ "$PRETTY_NAME" =~ Leap ]]; then
+         echo "modsecurity/modsecurity:opensuse-leap"
+         return 0
+    fi
+
+    local image=""
+    if [[ "$distro" == "ubuntu" ]]; then
+         image=${modsec_map_ubuntu[$version_major]:-"modsecurity/modsecurity:latest"}
+    elif [[ "$distro" == "centos" ]]; then
+         image=${modsec_map_centos[$version_major]:-"modsecurity/modsecurity:latest"}
+    elif [[ "$distro" == "debian" ]]; then
+         image=${modsec_map_debian[$version_major]:-"modsecurity/modsecurity:latest"}
+    elif [[ "$distro" == "fedora" ]]; then
+         image=${modsec_map_fedora[$version_major]:-"modsecurity/modsecurity:latest"}
+    else
+         image="modsecurity/modsecurity:latest"
     fi
     echo "$image"
 }
@@ -1321,42 +1350,42 @@ SecDefaultAction "phase:1,deny,log,status:403"
 SecRequestBodyAccess On
 SecResponseBodyAccess Off
 
-# Deny file uploads, block suspicious file parameters
+# Block file uploads by denying requests with file parameters.
 SecRule ARGS_NAMES "@rx .*" "id:1000,phase:2,deny,status:403,msg:'File upload detected; blocking.'"
 
-# Set strict temporary directories (ensure OS-level security on these)
+# Set temporary directories (ensure OS-level security on these paths)
 SecTmpDir /tmp/modsec_tmp
 SecDataDir /tmp/modsec_data
 
-# Increase audit logging for critical events
+# Enable detailed audit logging.
 SecAuditEngine On
 SecAuditLogParts ABIJDEFHZ
 SecAuditLog /var/log/modsecurity_audit.log
 
-# Paranoid mode settings for strict PCRE evaluation
+# Limit PCRE usage for performance and to mitigate complex regex attacks.
 SecPcreMatchLimit 1000
 SecPcreMatchLimitRecursion 1000
 
-# Limit request and response body sizes
+# Restrict request and response body sizes.
 SecResponseBodyLimit 524288
 SecRequestBodyLimit 13107200
 SecRequestBodyNoFilesLimit 131072
-
-# Recommended: Enforce secure (SHA512) password encryption for logs (if applicable)
 EOF
     echo "[*] Strict ModSecurity config generated at $conf_file"
     echo "$conf_file"
 }
 
 # Dockerized ModSecurity installation function (runs by default)
+# This function is used for both Ansible and regular execution.
 function install_modsecurity_docker {
     print_banner "Dockerized ModSecurity Installation (Strict Mode)"
-    # Ensure Docker is available.
-    if ! command -v docker &>/dev/null; then
-        echo "[ERROR] Docker is not installed. Please install Docker first."
+    # Ensure Docker is installed
+    if ! ensure_docker_installed; then
+        echo "[X] Could not install Docker automatically. Aborting."
         return 1
     fi
 
+    # Determine the Docker image; in Ansible mode, use the recommended image automatically.
     local image
     if [ "$ANSIBLE" == "true" ]; then
         image=$(get_modsecurity_image)
@@ -1372,36 +1401,38 @@ function install_modsecurity_docker {
         fi
     fi
 
-    # Generate strict configuration file.
+    # Generate the strict configuration file.
     local modsec_conf
     modsec_conf=$(generate_strict_modsec_conf)
 
+    # Pull and run the container.
     echo "[INFO] Pulling Docker image: $image"
     sudo docker pull "$image"
 
-    echo "[INFO] Running Dockerized ModSecurity container with strict configuration..."
-    # Run the container and mount our strict configuration into /etc/modsecurity/modsecurity.conf.
+    echo "[INFO] Running Dockerized ModSecurity container with strict settings..."
     sudo docker run -d --name dockerized_modsec -p 80:80 \
          -v "$modsec_conf":/etc/modsecurity/modsecurity.conf:ro \
          "$image"
 
     if sudo docker ps | grep -q dockerized_modsec; then
-        echo "[*] Dockerized ModSecurity container 'dockerized_modsec' is running with strict settings."
+        echo "[*] Dockerized ModSecurity container 'dockerized_modsec' is running with strict configuration."
+        return 0
     else
-        echo "[ERROR] Dockerized ModSecurity container failed to start."
+        echo "[X] Dockerized ModSecurity container failed to start."
         return 1
     fi
 }
 
-# Manual ModSecurity installation function (strict mode, menu‐only)
+# Manual ModSecurity installation function (strict mode)
+# This function is only available via the menu (not run by default).
 function install_modsecurity_manual {
     print_banner "Manual ModSecurity Installation (Strict Mode)"
     local ipt
     ipt=$(command -v iptables || command -v /sbin/iptables || command -v /usr/sbin/iptables)
     sudo $ipt -P OUTPUT ACCEPT
-    if command -v yum >/dev/null; then
+    if command -v yum &>/dev/null; then
         echo "RHEL-based manual ModSecurity installation not implemented"
-    elif command -v apt-get >/dev/null; then
+    elif command -v apt-get &>/dev/null; then
         sudo apt-get update
         sudo apt-get -y install libapache2-mod-security2
         sudo a2enmod security2
@@ -1410,7 +1441,7 @@ function install_modsecurity_manual {
         sudo cp "$strict_conf" /etc/modsecurity/modsecurity.conf
         sudo sed -i 's/SecRuleEngine DetectionOnly/SecRuleEngine On/g' /etc/modsecurity/modsecurity.conf
         sudo systemctl restart apache2
-    elif command -v apk >/dev/null; then
+    elif command -v apk &>/dev/null; then
         echo "Alpine-based manual ModSecurity installation not implemented"
     else
         echo "Unsupported distribution for manual ModSecurity installation"
@@ -1418,6 +1449,7 @@ function install_modsecurity_manual {
     fi
     sudo $ipt -P OUTPUT DROP
 }
+
 
 
 function remove_profiles {
