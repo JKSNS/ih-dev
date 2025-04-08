@@ -1451,12 +1451,57 @@ function manage_web_immutability {
     fi
 }
 
+
+function configure_apache_htaccess {
+    print_banner "Configuring Apache .htaccess"
+    # Ensure mod_rewrite is enabled (for Debian/Ubuntu systems; adjust as needed)
+    if command -v a2enmod &> /dev/null; then
+        sudo a2enmod rewrite
+        sudo systemctl restart apache2
+    fi
+    # Determine the web root (default to /var/www/html, or fallback to /var/www)
+    if [ -d "/var/www/html" ]; then
+         webroot="/var/www/html"
+    elif [ -d "/var/www" ]; then
+         webroot="/var/www"
+    else
+         echo "[X] No Apache web root found."
+         return 1
+    fi
+    sudo bash -c "cat > ${webroot}/.htaccess" <<'EOF'
+# Disable directory indexing
+Options -Indexes
+
+# Enable mod_rewrite for URL rewriting
+RewriteEngine On
+<IfModule mod_rewrite.c>
+    # Block malicious user agents
+    RewriteCond %{HTTP_USER_AGENT} ^w3af.sourceforge.net [NC,OR]
+    RewriteCond %{HTTP_USER_AGENT} dirbuster [NC,OR]
+    RewriteCond %{HTTP_USER_AGENT} nikto [NC,OR]
+    RewriteCond %{HTTP_USER_AGENT} SF [NC,OR]
+    RewriteCond %{HTTP_USER_AGENT} sqlmap [NC,OR]
+    RewriteCond %{HTTP_USER_AGENT} fimap [NC,OR]
+    RewriteCond %{HTTP_USER_AGENT} nessus [NC,OR]
+    RewriteCond %{HTTP_USER_AGENT} whatweb [NC,OR]
+    RewriteCond %{HTTP_USER_AGENT} Openvas [NC,OR]
+    RewriteCond %{HTTP_USER_AGENT} jbrofuzz [NC,OR]
+    RewriteCond %{HTTP_USER_AGENT} libwhisker [NC,OR]
+    RewriteCond %{HTTP_USER_AGENT} webshag [NC,OR]
+    RewriteCond %{HTTP:Acunetix-Product} ^WVS [NC]
+    RewriteRule ^.* http://127.0.0.1/ [R=301,L]
+</IfModule>
+EOF
+    echo "[*] Apache .htaccess configured at ${webroot}/.htaccess"
+}
+
 # Modified harden_web: In ansible mode, skip secure MySQL installation and web immutability.
 function harden_web {
     print_banner "Web Hardening Initiated"
     backup_databases
     secure_php_ini
     install_modsecurity
+    configure_apache_htaccess
     if [ "$ANSIBLE" == "true" ]; then
          echo "[*] Ansible mode: Skipping mysql_secure_installation and web directory immutability."
     else
