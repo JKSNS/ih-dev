@@ -1760,6 +1760,41 @@ function disable_phpmyadmin {
     done
 }
 
+function fix_web_browser() {
+    # Use provided directory (if any); default to Firefox's config directory
+    local browser_dir="${1:-$HOME/.mozilla}"
+
+    echo "=== Fixing Home Directory Permissions ==="
+    # Reset home directory ownership and secure permissions.
+    sudo chown -R "$(whoami):$(id -gn)" "$HOME"
+    sudo chmod 700 "$HOME"
+    echo "Home directory attributes:"
+    lsattr -d "$HOME"
+
+    if [ -d "$browser_dir" ]; then
+        echo "=== Fixing Browser Configuration Directory: $browser_dir ==="
+        echo "Current attributes for $browser_dir:"
+        lsattr -d "$browser_dir"
+        
+        echo "Removing immutable flag from home directory..."
+        sudo chattr -i "$HOME"
+        echo "Removing immutable flag recursively from $browser_dir..."
+        sudo chattr -R -i "$browser_dir"
+
+        # Back up the existing browser configuration directory with a timestamp.
+        local backup_dir="${browser_dir}_backup_$(date +%s)"
+        echo "Backing up $browser_dir to $backup_dir..."
+        mv "$browser_dir" "$backup_dir"
+
+        echo "Creating new configuration directory at $browser_dir..."
+        mkdir -p "$browser_dir"
+    else
+        echo "Browser configuration directory ($browser_dir) not found. Skipping browser-specific fixes."
+    fi
+
+    echo "=== Done ==="
+}
+
 
 function configure_apache_htaccess {
     print_banner "Configuring Apache .htaccess"
@@ -2036,9 +2071,10 @@ function advanced_hardening {
         echo "6) Set up cronjob to restart firewall service and additional services"
         echo "7) Reset Advanced Hardening Configurations"
         echo "8) Run rkhunter scan"
-        echo "9) Check Service Integrity"    # NEW ITEM
-        echo "10) Exit Advanced Hardening Menu"
-        read -p "Enter your choice [1-10]: " adv_choice
+        echo "9) Check Service Integrity"
+        echo "10) Fix Web Browser Permissions"
+        echo "11) Exit Advanced Hardening Menu"
+        read -p "Enter your choice [1-11]: " adv_choice
         case $adv_choice in
             1) run_full_advanced_hardening ;;
             2) setup_iptables_cronjob ;;
@@ -2048,13 +2084,15 @@ function advanced_hardening {
             6) setup_service_restart_cronjob ;;
             7) reset_advanced_hardening ;;
             8) run_rkhunter ;;
-            9) check_service_integrity ;;   # CALL NEW FUNCTION
-            10) echo "[*] Exiting advanced hardening menu."; break ;;
+            9) check_service_integrity ;;
+            10) fix_web_browser ;;
+            11) echo "[*] Exiting advanced hardening menu."; break ;;
             *) echo "[X] Invalid option." ;;
         esac
         echo ""
     done
 }
+
 
 
 
