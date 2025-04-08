@@ -1171,6 +1171,50 @@ function secure_php_ini {
     done
 }
 
+function configure_login_banner {
+    print_banner "Configuring Login Banner"
+
+    # Define the banner file and default banner text.
+    local banner_file="/etc/issue.net"
+    local default_banner="WARNING: UNAUTHORIZED ACCESS TO THIS NETWORK DEVICE IS PROHIBITED
+You must have explicit, authorized permission to access or configure this device.
+Unauthorized attempts to access and misuse of this system may result in prosecution.
+All activities performed on this device are logged and monitored.
+
+WARNING: This computer system is the property of Team ##.
+This computer system, including all related equipment, networks, and network devices, is for authorized users only.
+All activity on this network is being monitored and logged for lawful purposes, including verifying authorized use.
+
+Data collected including logs will be used to investigate and prosecute unauthorized or improper access.
+By continuing to use this system you indicate your awareness of and consent to these terms and conditions of use.
+
+All employees must take reasonable steps to prevent unauthorized access to the system, including protecting passwords and other login information.
+Employees are required to notify their administrators immediately of any known or suspected breach of security and to do their best to stop such a breach."
+
+    # Write the banner text to /etc/issue.net.
+    echo "$default_banner" | sudo tee "$banner_file" >/dev/null
+    echo "[*] Login banner written to $banner_file."
+
+    # Update SSH configuration to use the banner.
+    local ssh_config="/etc/ssh/sshd_config"
+    if [ -f "$ssh_config" ]; then
+        # Remove any pre-existing Banner directives.
+        sudo sed -i '/^Banner/d' "$ssh_config"
+        # Append the new Banner line.
+        echo "Banner $banner_file" | sudo tee -a "$ssh_config" >/dev/null
+        echo "[*] Updated $ssh_config to use the login banner."
+        # Restart the SSH service.
+        if command -v systemctl >/dev/null 2>&1; then
+            sudo systemctl restart sshd
+        else
+            sudo service ssh restart
+        fi
+        echo "[*] SSH service restarted."
+    else
+        echo "[X] SSH configuration file not found at $ssh_config."
+    fi
+}
+
 function secure_ssh {
     print_banner "Securing SSH"
 
@@ -1282,20 +1326,55 @@ function remove_profiles {
 }
 
 function fix_pam {
-    print_banner "Fixing PAM Configuration"
+    print_banner "Fixing PAM Configuration and Enforcing Password Policies"
+
+    # Temporarily set iptables OUTPUT policy to ACCEPT.
     local ipt
     ipt=$(command -v iptables || command -v /sbin/iptables || command -v /usr/sbin/iptables)
     sudo $ipt -P OUTPUT ACCEPT
-    if command -v yum >/dev/null; then
+
+    if grep -qi 'debian\|ubuntu' /etc/os-release; then
+        echo "[*] Detected Debian/Ubuntu system; configuring PAM password policies."
+
+        # Install libpam-pwquality if not already installed.
+        sudo apt-get install -y libpam-pwquality
+
+        # Update /etc/pam.d/common-password.
+        local common_pass="/etc/pam.d/common-password"
+        if [ -f "$common_pass" ]; then
+            # Remove any existing password policy options.
+            sudo sed -i 's/ minlen=[0-9]\+//g' "$common_pass"
+            sudo sed -i 's/ retry=[0-9]\+//g' "$common_pass"
+            sudo sed -i 's/ dcredit=[-0-9]\+//g' "$common_pass"
+            sudo sed -i 's/ ucredit=[-0-9]\+//g' "$common_pass"
+            sudo sed -i 's/ lcredit=[-0-9]\+//g' "$common_pass"
+            sudo sed -i 's/ ocredit=[-0-9]\+//g' "$common_pass"
+            sudo sed -i 's/ remember=[0-9]\+//g' "$common_pass"
+            # Append the desired settings.
+            sudo sed -i '/^password.*pam_unix\.so/ s/$/ minlen=12 retry=5 dcredit=-1 ucredit=-1 lcredit=-1 ocredit=-1 remember=5 sha512/' "$common_pass"
+            echo "[*] Updated $common_pass with policy settings."
+        else
+            echo "[X] $common_pass not found."
+        fi
+
+        # Update /etc/login.defs for password aging.
+        local login_defs="/etc/login.defs"
+        if [ -f "$login_defs" ]; then
+            sudo sed -i 's/^PASS_MAX_DAYS.*/PASS_MAX_DAYS   99999/' "$login_defs"
+            sudo sed -i 's/^PASS_MIN_DAYS.*/PASS_MIN_DAYS   2/' "$login_defs"
+            sudo sed -i 's/^PASS_WARN_AGE.*/PASS_WARN_AGE   10/' "$login_defs"
+            echo "[*] Updated $login_defs with login definitions."
+        else
+            echo "[X] $login_defs not found."
+        fi
+
+    elif command -v yum >/dev/null; then
         if command -v authconfig >/dev/null; then
             sudo authconfig --updateall
             sudo yum -y reinstall pam
         else
-            echo "No authconfig, cannot fix PAM on this system"
+            echo "[X] No authconfig found; cannot fix PAM on this system."
         fi
-    elif command -v apt-get >/dev/null; then
-        echo "" | sudo DEBIAN_FRONTEND=noninteractive pam-auth-update --force
-        sudo apt-get -y --reinstall install libpam-runtime libpam-modules
     elif command -v apk >/dev/null; then
         if [ -d /etc/pam.d ]; then
             sudo apk fix --purge linux-pam
@@ -1303,21 +1382,24 @@ function fix_pam {
                 sudo mv "$file" "$(echo $file | sed 's/.apk-new//g')"
             done
         else
-            echo "PAM is not installed"
+            echo "[X] PAM is not installed."
         fi
     elif command -v pacman >/dev/null; then
-        if [ -z "$BACKUPDIR" ]; then
-            echo "No backup directory provided for PAM configs"
-        else
+        if [ -n "$BACKUPDIR" ]; then
             sudo mv /etc/pam.d /etc/pam.d.backup
             sudo cp -R "$BACKUPDIR" /etc/pam.d
+        else
+            echo "[X] No backup directory provided for PAM configs."
         fi
         sudo pacman -S pam --noconfirm
     else
-        echo "Unknown OS, not fixing PAM"
+        echo "[X] Unknown OS; PAM configuration not fixed."
     fi
+
+    # Restore iptables OUTPUT policy to DROP.
     sudo $ipt -P OUTPUT DROP
 }
+
 
 function search_ssn {
     print_banner "Searching for SSN Patterns"
@@ -1944,7 +2026,10 @@ function main {
     check_permissions
     sysctl_config
 
-    # NEW: Apply fork bombing defense measures.
+    # Configure login banner for both regular and Ansible modes.
+    configure_login_banner
+
+    # Defend against fork bombing.
     defend_against_forkbomb
 
     if [ "$ANSIBLE" != "true" ]; then
@@ -1961,12 +2046,17 @@ function main {
          harden_web
          echo "[*] Ansible mode: Skipping advanced hardening prompts."
     fi
+
+    # Run rkhunter scan conditionally (prompt only if not in Ansible mode).
     run_rkhunter
+
     echo "[*] End of full hardening process"
     echo "[*] Script log can be viewed at $LOG"
-    echo "[*][WARNING] FORWARD chain is set to DROP. If this box is a router or network device, please run 'sudo iptables -P FORWARD ALLOW'. "
+    echo "[*][WARNING] FORWARD chain is set to DROP. If this box is a router or network device, please run 'sudo iptables -P FORWARD ALLOW'."
     echo "[*] ***Please install system updates now***"
 }
+
+
 
 ##################### ARGUMENT PARSING + LOGGING SETUP #####################
 for arg in "$@"; do
