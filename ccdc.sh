@@ -1294,27 +1294,27 @@ function secure_ssh {
 }
 
 #########################################################
-# MODSECURITY SECTION
+# MODSECURITY SECTION !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 #########################################################
 
 # Determine the recommended ModSecurity Docker image tag based on the OS.
-# Supports Ubuntu (14,16,18,20,22), CentOS (6,7,8,9), Debian (7–12), Fedora (25–35),
-# and OpenSUSE (Leap and Tumbleweed). If no explicit mapping exists, falls back to 'latest'.
+# The mappings support Ubuntu (14,16,18,20,22), CentOS (6,7,8,9), Debian (7–12),
+# Fedora (25–35), and OpenSUSE (Leap/Tumbleweed). If no explicit mapping exists, it falls back to 'latest'.
 function get_modsecurity_image {
-    # Source OS info
+    # Source OS info if available
     if [ -f /etc/os-release ]; then
         . /etc/os-release
     fi
     distro=$(echo "$ID" | tr '[:upper:]' '[:lower:]')
     version_major=$(echo "$VERSION_ID" | cut -d. -f1)
 
-    # Define mappings for various distributions
+    # Define mappings for each supported distro.
     declare -A modsec_map_ubuntu=( ["14"]="modsecurity/modsecurity:ubuntu14.04" ["16"]="modsecurity/modsecurity:ubuntu16.04" ["18"]="modsecurity/modsecurity:ubuntu18.04" ["20"]="modsecurity/modsecurity:ubuntu20.04" ["22"]="modsecurity/modsecurity:ubuntu22.04" )
-    declare -A modsec_map_centos=( ["6"]="modsecurity/modsecurity:centos6" ["7"]="modsecurity/modsecurity:centos7" ["8"]="modsecurity/modsecurity:centos8" ["9"]="modsecurity/modsecurity:centos:stream9" )
+    declare -A modsec_map_centos=( ["6"]="modsecurity/modsecurity:centos6" ["7"]="modsecurity/modsecurity:centos7" ["8"]="modsecurity/modsecurity:centos8" ["9"]="modsecurity/modsecurity:centos-stream9" )
     declare -A modsec_map_debian=( ["7"]="modsecurity/modsecurity:debian7" ["8"]="modsecurity/modsecurity:debian8" ["9"]="modsecurity/modsecurity:debian9" ["10"]="modsecurity/modsecurity:debian10" ["11"]="modsecurity/modsecurity:debian11" ["12"]="modsecurity/modsecurity:debian12" )
     declare -A modsec_map_fedora=( ["25"]="modsecurity/modsecurity:fedora25" ["26"]="modsecurity/modsecurity:fedora26" ["27"]="modsecurity/modsecurity:fedora27" ["28"]="modsecurity/modsecurity:fedora28" ["29"]="modsecurity/modsecurity:fedora29" ["30"]="modsecurity/modsecurity:fedora30" ["31"]="modsecurity/modsecurity:fedora31" ["35"]="modsecurity/modsecurity:fedora35" )
 
-    # OpenSUSE: check PRETTY_NAME for a keyword match
+    # Check for OpenSUSE using PRETTY_NAME keywords.
     if [[ "$PRETTY_NAME" =~ Tumbleweed ]]; then
          echo "modsecurity/modsecurity:opensuse-tumbleweed"
          return 0
@@ -1324,17 +1324,23 @@ function get_modsecurity_image {
     fi
 
     local image=""
-    if [[ "$distro" == "ubuntu" ]]; then
+    case "$distro" in
+      ubuntu)
          image=${modsec_map_ubuntu[$version_major]:-"modsecurity/modsecurity:latest"}
-    elif [[ "$distro" == "centos" ]]; then
+         ;;
+      centos)
          image=${modsec_map_centos[$version_major]:-"modsecurity/modsecurity:latest"}
-    elif [[ "$distro" == "debian" ]]; then
+         ;;
+      debian)
          image=${modsec_map_debian[$version_major]:-"modsecurity/modsecurity:latest"}
-    elif [[ "$distro" == "fedora" ]]; then
+         ;;
+      fedora)
          image=${modsec_map_fedora[$version_major]:-"modsecurity/modsecurity:latest"}
-    else
+         ;;
+      *)
          image="modsecurity/modsecurity:latest"
-    fi
+         ;;
+    esac
     echo "$image"
 }
 
@@ -1362,7 +1368,7 @@ SecAuditEngine On
 SecAuditLogParts ABIJDEFHZ
 SecAuditLog /var/log/modsecurity_audit.log
 
-# Limit PCRE usage for performance and to mitigate complex regex attacks.
+# Limit PCRE usage to mitigate complex regex attacks.
 SecPcreMatchLimit 1000
 SecPcreMatchLimitRecursion 1000
 
@@ -1375,11 +1381,11 @@ EOF
     echo "$conf_file"
 }
 
-# Dockerized ModSecurity installation function (runs by default)
-# This function is used for both Ansible and regular execution.
+# Dockerized ModSecurity installation function.
+# This function is run by default in both regular and Ansible executions.
 function install_modsecurity_docker {
     print_banner "Dockerized ModSecurity Installation (Strict Mode)"
-    # Ensure Docker is installed
+    # Ensure Docker is installed (auto-install if necessary)
     if ! ensure_docker_installed; then
         echo "[X] Could not install Docker automatically. Aborting."
         return 1
@@ -1405,10 +1411,11 @@ function install_modsecurity_docker {
     local modsec_conf
     modsec_conf=$(generate_strict_modsec_conf)
 
-    # Pull and run the container.
+    # Pull the Docker image.
     echo "[INFO] Pulling Docker image: $image"
     sudo docker pull "$image"
 
+    # Run the container with the strict configuration mounted read-only.
     echo "[INFO] Running Dockerized ModSecurity container with strict settings..."
     sudo docker run -d --name dockerized_modsec -p 80:80 \
          -v "$modsec_conf":/etc/modsecurity/modsecurity.conf:ro \
@@ -1423,8 +1430,8 @@ function install_modsecurity_docker {
     fi
 }
 
-# Manual ModSecurity installation function (strict mode)
-# This function is only available via the menu (not run by default).
+# Manual ModSecurity installation function (strict mode).
+# This function is available only via the menu (not run by default).
 function install_modsecurity_manual {
     print_banner "Manual ModSecurity Installation (Strict Mode)"
     local ipt
