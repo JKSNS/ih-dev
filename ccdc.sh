@@ -1884,77 +1884,73 @@ function fix_modsecurity_audit_log {
 # not implemented.
 ########################################################################
 function install_modsecurity_manual {
-    # Detect the package manager and ensure we’re on a Debian-based system.
-    if command -v apt-get &>/dev/null; then
-        echo "[*] Updating package list for Debian-based system..."
-        sudo apt-get update
-        echo "[*] Installing libapache2-mod-security2..."
-        sudo apt-get -y install libapache2-mod-security2
-    else
+    # 1) Install the package on Debian/Ubuntu
+    if ! command -v apt-get &>/dev/null; then
         echo "[X] Manual ModSecurity installation is only implemented for Debian-based systems."
         return 1
     fi
+    echo "[*] Updating package list..."
+    sudo apt-get update -qq
+    echo "[*] Installing libapache2-mod-security2 and dependencies..."
+    sudo apt-get install -y libapache2-mod-security2 modsecurity-crs
 
-    # Try to locate the recommended configuration file.
+    # 2) Locate the “recommended” configuration
     local recommended_conf=""
-    # Check common candidate locations:
-    if [ -f "/etc/modsecurity/modsecurity.conf-recommended" ]; then
-        recommended_conf="/etc/modsecurity/modsecurity.conf-recommended"
-    elif [ -f "/usr/share/doc/libapache2-mod-security2/examples/modsecurity.conf-recommended" ]; then
-        recommended_conf="/usr/share/doc/libapache2-mod-security2/examples/modsecurity.conf-recommended"
-    elif [ -f "/usr/share/modsecurity-crs/modsecurity.conf-recommended" ]; then
-        recommended_conf="/usr/share/modsecurity-crs/modsecurity.conf-recommended"
-    fi
+    for candidate in \
+        /etc/modsecurity/modsecurity.conf-recommended \
+        /usr/share/doc/libapache2-mod-security2/examples/modsecurity.conf-recommended \
+        /usr/share/modsecurity-crs/modsecurity.conf-recommended
+    do
+        if [ -f "$candidate" ]; then
+            recommended_conf="$candidate"
+            break
+        fi
+    done
 
     if [ -z "$recommended_conf" ]; then
-        echo "[X] ERROR: Could not locate the recommended modsecurity configuration file."
-        echo "[X] Please manually locate 'modsecurity.conf-recommended' and copy it to /etc/modsecurity/"
+        echo "[X] ERROR: Could not find modsecurity.conf-recommended."
+        echo "    Please locate it and copy it to /etc/modsecurity/modsecurity.conf"
         return 1
-    else
-        echo "[*] Found recommended modsecurity config: $recommended_conf"
     fi
+    echo "[*] Found recommended config at: $recommended_conf"
 
-    # Ensure the destination directory exists.
-    if [ ! -d "/etc/modsecurity" ]; then
-        sudo mkdir -p /etc/modsecurity
-    fi
-
-    # Copy the recommended configuration to the correct location.
-    echo "[*] Deploying configuration to /etc/modsecurity/modsecurity.conf"
+    # 3) Deploy into /etc/modsecurity
+    sudo mkdir -p /etc/modsecurity
+    echo "[*] Copying to /etc/modsecurity/modsecurity.conf"
     sudo cp "$recommended_conf" /etc/modsecurity/modsecurity.conf
-    if [ $? -ne 0 ]; then
-        echo "[X] ERROR: Failed to copy the configuration file."
-        return 1
-    fi
 
-    # Modify the configuration to set the rule engine to On (enforcing mode).
-    sudo sed -i 's/SecRuleEngine DetectionOnly/SecRuleEngine On/g' /etc/modsecurity/modsecurity.conf
-    if [ $? -ne 0 ]; then
-        echo "[X] ERROR: Failed to modify modsecurity configuration."
-        return 1
-    else
-        echo "[*] Modified modsecurity configuration to enable rules (SecRuleEngine On)."
-    fi
+    # 4) Switch to “On” (enforcing) mode
+    echo "[*] Enabling SecRuleEngine"
+    sudo sed -i 's/SecRuleEngine .*/SecRuleEngine On/' /etc/modsecurity/modsecurity.conf
 
-    # Enable the ModSecurity module if not already enabled (Debian/Ubuntu)
+    # 5) Create & permission the audit log file
+    echo "[*] Ensuring ModSecurity audit log exists and is writable by Apache"
+    sudo mkdir -p /var/log/apache2
+    sudo touch    /var/log/apache2/modsec_audit.log
+    # Apache on Debian/Ubuntu runs as www-data:www-data
+    sudo chown    www-data:www-data /var/log/apache2/modsec_audit.log
+    sudo chmod    0640              /var/log/apache2/modsec_audit.log
+
+    # 6) Enable the Apache module
     if command -v a2enmod &>/dev/null; then
-        echo "[*] Enabling the security2 module via a2enmod..."
+        echo "[*] Enabling security2 module"
         sudo a2enmod security2
     fi
 
-    # Restart Apache service - check both apache2 and httpd
+    # 7) Restart Apache so it picks up the new config
     if systemctl is-active apache2 &>/dev/null; then
-        echo "[*] Restarting apache2 service..."
+        echo "[*] Restarting apache2..."
         sudo systemctl restart apache2
     elif systemctl is-active httpd &>/dev/null; then
-        echo "[*] Restarting httpd service..."
+        echo "[*] Restarting httpd..."
         sudo systemctl restart httpd
     else
-        echo "[WARN] Apache service not detected as active. Please restart your web server manually."
+        echo "[!] Warning: Apache service not detected as active.  Please restart it manually."
     fi
 
-    echo "[*] Manual ModSecurity installation completed successfully."
+    echo "[*] Manual ModSecurity install & hardening complete."
 }
+
 
 
 
