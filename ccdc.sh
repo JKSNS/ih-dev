@@ -1508,48 +1508,22 @@ function backup_databases {
 
 function secure_php_ini {
     print_banner "Securing php.ini Files"
-    
-    # Prompt to see if the user wants to skip or proceed with certain lines:
-    read -p "Enable older/deprecated directives (like magic_quotes_gpc)? (y/N): " legacy_choice
-    local set_deprecated="false"
-    if [[ "$legacy_choice" =~ ^[Yy]$ ]]; then
-        set_deprecated="true"
-    fi
-
-    # “session.cookie_secure=1” might also break if you’re not using HTTPS:
-    read -p "Are you using HTTPS? (y/N): " https_choice
-    local set_cookie_secure="false"
-    if [[ "$https_choice" =~ ^[Yy]$ ]]; then
-        set_cookie_secure="true"
-    fi
-
     for ini in $(find / -name "php.ini" 2>/dev/null); do
         echo "[+] Writing php.ini options to $ini..."
-
-        # Safe defaults:
-        echo "disable_functions = shell_exec, exec, passthru, proc_open, popen, system, phpinfo" | sudo tee -a "$ini" >/dev/null
-        echo "max_execution_time = 3"                | sudo tee -a "$ini" >/dev/null
-        echo "register_globals = off"               | sudo tee -a "$ini" >/dev/null
-        echo "allow_url_fopen = off"                | sudo tee -a "$ini" >/dev/null
-        echo "allow_url_include = off"              | sudo tee -a "$ini" >/dev/null
-        echo "display_errors = off"                 | sudo tee -a "$ini" >/dev/null
-        echo "short_open_tag = off"                 | sudo tee -a "$ini" >/dev/null
-        echo "session.cookie_httponly = 1"          | sudo tee -a "$ini" >/dev/null
-        echo "session.use_only_cookies = 1"         | sudo tee -a "$ini" >/dev/null
-        
-        # Conditionally set older/deprecated config:
-        if [ "$set_deprecated" == "true" ]; then
-            # This might break on modern PHP. Use with caution:
-            echo "magic_quotes_gpc = on" | sudo tee -a "$ini" >/dev/null
-        fi
-
-        # Conditionally set cookie_secure if definitely using HTTPS
-        if [ "$set_cookie_secure" == "true" ]; then
-            echo "session.cookie_secure = 1" | sudo tee -a "$ini" >/dev/null
-        fi
-
+        echo "disable_functions = shell_exec, exec, passthru, proc_open, popen, system, phpinfo" >> "$ini"
+        echo "max_execution_time = 3" >> "$ini"
+        echo "register_globals = off" >> "$ini"
+        echo "magic_quotes_gpc = on" >> "$ini"
+        echo "allow_url_fopen = off" >> "$ini"
+        echo "allow_url_include = off" >> "$ini"
+        echo "display_errors = off" >> "$ini"
+        echo "short_open_tag = off" >> "$ini"
+        echo "session.cookie_httponly = 1" >> "$ini"
+        echo "session.use_only_cookies = 1" >> "$ini"
+        echo "session.cookie_secure = 1" >> "$ini"
     done
 }
+
 
 
 function configure_login_banner {
@@ -2085,20 +2059,19 @@ function my_secure_sql_installation {
     print_banner "My Secure SQL Installation"
     if [ "$ANSIBLE" == "true" ]; then
         echo "[*] Ansible mode: Skipping mysql_secure_installation."
-        # <-- DO NOT return or exit here. Just continue on.
         return 0
     fi
-
     read -p "Would you like to run mysql_secure_installation? (y/N): " sql_choice
-    if [[ "$sql_choice" == "y" || "$sql_choice" == "Y" ]]; then
-        echo "[*] Running mysql_secure_installation..."
-        sudo mysql_secure_installation
-        # Script continues onward afterwards
+    if [[ "$sql_choice" =~ ^[Yy]$ ]]; then
+         echo "[*] Running mysql_secure_installation..."
+         sudo mysql_secure_installation
+         # Continue onward regardless of the exit status
     else
-        # Instead of returning or exiting, just continue:
-        echo "[*] Skipping mysql_secure_installation. Continuing web hardening..."
+         echo "[*] Skipping mysql_secure_installation."
     fi
+    echo "[*] Continuing with web hardening..."
 }
+
 
 
 function manage_web_immutability_menu {
@@ -2589,27 +2562,34 @@ function harden_web {
     backup_databases
     secure_php_ini
 
-    # For Ansible mode or non-interactive environment, 
-    # ALWAYS install modsecurity MANUALLY if Apache is running
-    # (If you want to skip it if apache2/httpd is not installed, you can check it.)
-    if systemctl is-active apache2 &>/dev/null || systemctl is-active httpd &>/dev/null; then
-        echo "[*] Installing ModSecurity manually (strict mode)..."
-        install_modsecurity_manual
+    # Ask if the user wants to manually install the WAF (ModSecurity)
+    if [ "$ANSIBLE" != "true" ]; then
+        read -p "Would you like to manually install the WAF (ModSecurity manual installation)? (y/N): " waf_choice
+        if [[ "$waf_choice" =~ ^[Yy]$ ]]; then
+            install_modsecurity_manual
+        else
+            echo "[*] Skipping manual WAF installation."
+        fi
     else
-        echo "[*] Apache not detected; skipping ModSecurity installation."
+        # In Ansible mode, install only if Apache/httpd is running.
+        if systemctl is-active apache2 &>/dev/null || systemctl is-active httpd &>/dev/null; then
+            echo "[*] Detected Apache/HTTPD service running. Installing ModSecurity manually..."
+            install_modsecurity_manual
+        else
+            echo "[*] No Apache/HTTPD service detected; skipping ModSecurity installation in Ansible mode."
+        fi
     fi
 
-    # Configure Apache .htaccess
+    # Continue with the rest of the web hardening process
     configure_apache_htaccess
 
-    # If we are in ANSIBLE mode, skip interactive prompts
-    if [ "$ANSIBLE" == "true" ]; then
-        echo "[*] Ansible mode: Skipping mysql_secure_installation and web directory immutability."
-    else
-        my_secure_sql_installation
-        manage_web_immutability
+    if [ "$ANSIBLE" != "true" ]; then
+         my_secure_sql_installation
+         manage_web_immutability
     fi
+    echo "[*] Web hardening process completed."
 }
+
 
 
 
