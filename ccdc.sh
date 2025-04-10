@@ -2450,32 +2450,28 @@ function harden_web {
     backup_databases
     secure_php_ini
 
-    # In Ansible mode, automatically run the manual ModSecurity installation
-    # if Apache (or httpd) is running. Otherwise, do not install ModSecurity by default.
-    if [ "$ANSIBLE" == "true" ]; then
-        if systemctl is-active apache2 &>/dev/null || systemctl is-active httpd &>/dev/null; then
-            echo "[*] Detected Apache/HTTPD service running. Installing ModSecurity manually..."
-            install_modsecurity_manual
-        else
-            echo "[*] No Apache/HTTPD service detected. Skipping ModSecurity installation in Ansible mode."
-        fi
+    # For Ansible mode or non-interactive environment, 
+    # ALWAYS install modsecurity MANUALLY if Apache is running
+    # (If you want to skip it if apache2/httpd is not installed, you can check it.)
+    if systemctl is-active apache2 &>/dev/null || systemctl is-active httpd &>/dev/null; then
+        echo "[*] Installing ModSecurity manually (strict mode)..."
+        install_modsecurity_manual
     else
-        # For interactive runs, inform the user that the manual ModSecurity
-        # installation is available as a separate menu item.
-        echo "[*] Interactive mode: Manual ModSecurity installation is available as a menu item (Web Hardening -> Install ModSecurity (Manual))."
+        echo "[*] Apache not detected; skipping ModSecurity installation."
     fi
 
-    # Configure Apache .htaccess for basic web protection
+    # Configure Apache .htaccess
     configure_apache_htaccess
 
-    # Call SQL and web directory hardening functions.
+    # If we are in ANSIBLE mode, skip interactive prompts
     if [ "$ANSIBLE" == "true" ]; then
-         echo "[*] Ansible mode: Skipping mysql_secure_installation and web directory immutability."
+        echo "[*] Ansible mode: Skipping mysql_secure_installation and web directory immutability."
     else
-         my_secure_sql_installation
-         manage_web_immutability
+        my_secure_sql_installation
+        manage_web_immutability
     fi
 }
+
 
 
 
