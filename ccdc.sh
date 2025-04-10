@@ -2701,25 +2701,38 @@ function advanced_hardening {
 ##################### WEB HARDENING MENU FUNCTION #####################
 function show_web_hardening_menu {
     print_banner "Web Hardening Menu"
+    if [ "$ANSIBLE" == "true" ]; then
+        echo "[*] Ansible mode: Running full web hardening non-interactively."
+        harden_web
+        disable_phpmyadmin
+        return 0
+    fi
+
     echo "1) Run Full Web Hardening Process"
-    echo "2) Backup Databases"
-    echo "3) Secure php.ini Files"
+    echo "2) backup_databases"
+    echo "3) secure_php_ini"
     echo "4) Install ModSecurity (Dockerized)"
     echo "5) Install ModSecurity (Manual)"
-    echo "6) Run My Secure SQL Installation"
-    echo "7) Manage Web Directory Immutability"
+    echo "6) my_secure_sql_installation"
+    echo "7) manage_web_immutability"
     echo "8) Disable phpMyAdmin"
-    echo "9) Backup or Restore Non-Immutable Directories"
-    echo "0) Exit Web Hardening Menu"
-    read -p "Enter your choice: " web_choice
-    case $web_choice in
+    echo "9) Exit Web Hardening Menu"
+
+    read -p "Enter your choice [1-9]: " web_menu_choice
+    case $web_menu_choice in
         1)
             print_banner "Web Hardening Initiated"
             backup_databases
             secure_php_ini
-            install_modsecurity_docker
+
+            # MANUAL WAF INSTALL by default
+            install_modsecurity_manual
+
             my_secure_sql_installation
+
+            # place immutability AFTER modsecurity is done
             manage_web_immutability
+
             ;;
         2)
             backup_databases
@@ -2743,9 +2756,6 @@ function show_web_hardening_menu {
             disable_phpmyadmin
             ;;
         9)
-            handle_non_immutable_dirs
-            ;;
-        0)
             echo "[*] Exiting Web Hardening Menu"
             ;;
         *)
