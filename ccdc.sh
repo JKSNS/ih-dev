@@ -491,120 +491,141 @@ function setup_ufw {
 }
 
 
-# --- BEGIN: Proxy & Certificate Configuration Function ---
+# ============================================================
+# FUNCTION: setup_proxy_certificates_and_config
+# ============================================================
+# This function prompts the user to input the required proxy
+# and certificate download URLs, and then configures the system's
+# trusted certificates and proxy settings. It supports the major
+# Linux distributions (RHEL/CentOS, Debian/Ubuntu, Alpine, and
+# Slackware [stub]). You can adjust the default prompts and file
+# paths if your environment differs.
+# ============================================================
 function setup_proxy_certificates_and_config {
-    print_banner "Configuring Proxy and Installing CA Certificates"
+    print_banner "Proxy and Certificate Configuration Setup"
 
-    # Define proxy and certificate URLs (adjust these as needed)
-    local PROXY="http://192.168.1.107:8000"
-    local PATCH_URL="http://192.168.1.107:9000/mitmproxy-ca-cert.crt"
-    local PEM_URL="http://192.168.1.107:9000/mitmproxy-ca-cert.pem"
-
-    # Ensure /usr/sbin is in the PATH (if not already)
-    export PATH=$PATH:/usr/sbin/
-
-    # Internal functions for each OS type:
-    RHEL() {
-        echo "[*] Setting up for RHEL"
-        sudo yum install -y ca-certificates curl
-        curl -o cert.crt --proxy "$PROXY" "$PATCH_URL"
-        curl -o cert.pem --proxy "$PROXY" "$PEM_URL"
-        sudo cp cert.crt /etc/pki/ca-trust/source/anchors/
-        sudo cp cert.pem /etc/pki/ca-trust/source/anchors/
-        sudo chmod +x /etc/pki/ca-trust/source/anchors/cert.crt
-        sudo chmod +x /etc/pki/ca-trust/source/anchors/cert.pem
-        sudo update-ca-trust
-        # Configure yum to use the proxy
-        echo "proxy=$PROXY" | sudo tee -a /etc/yum.conf >/dev/null
-        # Add proxy settings to bash environment
-        echo "export http_proxy=\"$PROXY\"" >> ~/.bashrc
-        echo "export https_proxy=\"$PROXY\"" >> ~/.bashrc
-        source ~/.bashrc
-        echo "[*] RHEL proxy configuration complete."
-    }
-
-    DEBIAN() {
-        echo "[*] Setting up proxy for Debian"
-        sudo apt update
-        sudo apt install -y ca-certificates curl
-        curl -o cert.crt --proxy "$PROXY" "$PATCH_URL"
-        curl -o certPem.pem --proxy "$PROXY" "$PEM_URL"
-        mv certPem.pem certPem.crt
-        sudo mkdir -p /usr/share/ca-certificates/extra
-        sudo cp cert.crt /usr/share/ca-certificates/extra/cert.crt
-        sudo cp cert.crt /etc/ssl/certs/
-        sudo cp certPem.crt /usr/share/ca-certificates/extra/certPem.crt
-        sudo cp certPem.crt /etc/ssl/certs/
-        sudo dpkg-reconfigure ca-certificates
-        sudo update-ca-certificates
-        # Fallback if update-ca-certificates did not succeed
-        if [ $? -ne 0 ]; then
-            sudo /usr/sbin/update-ca-certificates
-        fi
-        # Configure apt to use the proxy
-        sudo tee /etc/apt/apt.conf.d/proxy.conf >/dev/null <<EOF
-Acquire::http::Proxy "$PROXY";
-Acquire::https::Proxy "$PROXY";
-EOF
-        # Configure environment variables
-        echo "http_proxy=\"$PROXY\"" | sudo tee -a /etc/environment >/dev/null
-        echo "https_proxy=\"$PROXY\"" | sudo tee -a /etc/environment >/dev/null
-        echo "ftp_proxy=\"$PROXY\"" | sudo tee -a /etc/environment >/dev/null
-        echo "no_proxy=\"localhost,127.0.0.1\"" | sudo tee -a /etc/environment >/dev/null
-        source /etc/environment
-        echo "export http_proxy=\"$PROXY\"" >> ~/.bashrc
-        echo "export https_proxy=\"$PROXY\"" >> ~/.bashrc
-        source ~/.bashrc
-        echo "[*] Debian proxy configuration complete."
-    }
-
-    UBUNTU() {
-        echo "[*] Setting up proxy for Ubuntu"
-        DEBIAN
-    }
-
-    ALPINE() {
-        echo "[*] Setting up proxy for Alpine"
-        sudo apk add --no-cache ca-certificates
-        curl -o cert.pem --proxy "$PROXY" "$PATCH_URL"
-        sudo cp cert.pem /usr/local/share/ca-certificates/
-        sudo update-ca-certificates
-        # Append proxy repositories (adjust as needed)
-        sudo tee -a /etc/apk/repositories >/dev/null <<EOF
-http://$PROXY/alpine/latest/main
-https://$PROXY/alpine/latest/main
-http://$PROXY/alpine/latest/community
-https://$PROXY/alpine/latest/community
-EOF
-        echo "export http_proxy=\"$PROXY\"" | sudo tee -a /etc/environment >/dev/null
-        echo "export https_proxy=\"$PROXY\"" | sudo tee -a /etc/environment >/dev/null
-        echo "[*] Alpine proxy configuration complete."
-    }
-
-    SLACK() {
-        echo "[*] Proxy configuration for Slackware not implemented."
-    }
-
-    # Detect which OS tool is available and call the appropriate function:
-    if command -v yum >/dev/null; then
-        RHEL
-    elif command -v apt-get >/dev/null; then
-        if grep -qi Ubuntu /etc/os-release; then
-            UBUNTU
-        else
-            DEBIAN
-        fi
-    elif command -v apk >/dev/null; then
-        ALPINE
-    elif command -v slapt-get >/dev/null || grep -qi Slackware /etc/os-release; then
-        SLACK
-    else
-        echo "[X] Unsupported OS for proxy and certificate setup."
+    # Prompt the user for required URLs
+    read -p "Enter the Proxy URL (e.g., http://192.168.1.107:8000): " user_proxy
+    if [ -z "$user_proxy" ]; then
+        echo "[X] No proxy URL provided. Aborting configuration."
+        return 1
     fi
+    PROXY="$user_proxy"
+
+    read -p "Enter the Certificate CRT URL (e.g., http://192.168.1.107:9000/mitmproxy-ca-cert.crt): " user_patch_url
+    if [ -z "$user_patch_url" ]; then
+        echo "[X] No certificate CRT URL provided. Aborting configuration."
+        return 1
+    fi
+    PATCH_URL="$user_patch_url"
+
+    read -p "Enter the Certificate PEM URL (e.g., http://192.168.1.107:9000/mitmproxy-ca-cert.pem): " user_pem_url
+    if [ -z "$user_pem_url" ]; then
+        echo "[X] No certificate PEM URL provided. Aborting configuration."
+        return 1
+    fi
+    PEM_URL="$user_pem_url"
+
+    echo "[*] Proxy is set to: $PROXY"
+    echo "[*] CRT will be downloaded from: $PATCH_URL"
+    echo "[*] PEM will be downloaded from: $PEM_URL"
+
+    # Now, detect which OS we’re running and call the corresponding helper.
+    if command -v yum &>/dev/null ; then
+        RHEL_proxy_setup
+    elif command -v apt-get &>/dev/null ; then
+        if grep -qi Ubuntu /etc/os-release; then
+            UBUNTU_proxy_setup
+        else
+            DEBIAN_proxy_setup
+        fi
+    elif command -v apk &>/dev/null ; then
+        ALPINE_proxy_setup
+    elif command -v slapt-get &>/dev/null || grep -qi Slackware /etc/os-release ; then
+        SLACK_proxy_setup
+    else
+        echo "[X] Unsupported or unknown OS for proxy/certificate configuration."
+        return 1
+    fi
+
+    echo "[*] Proxy and certificate configuration completed."
 }
-# --- END: setup_proxy_certificates_and_config ---
 
+# ============================================================
+# Helper Functions for OS-Specific Proxy & Certificate Setup
+# ============================================================
 
+# --- RHEL/CentOS-based Systems ---
+function RHEL_proxy_setup {
+    echo "[*] Setting up proxy and installing certificate for RHEL-based systems..."
+    yum install -y ca-certificates curl
+    # Download the certificate files via the proxy
+    curl -o cert.crt --proxy "$PROXY" "$PATCH_URL"
+    curl -o cert.pem --proxy "$PROXY" "$PEM_URL"
+    # Copy certificates to the system's anchor directory
+    cp cert.crt /etc/pki/ca-trust/source/anchors/
+    cp cert.pem /etc/pki/ca-trust/source/anchors/
+    # Set permissions (644 is typical for certificates)
+    chmod 644 /etc/pki/ca-trust/source/anchors/cert.crt
+    chmod 644 /etc/pki/ca-trust/source/anchors/cert.pem
+    # Update the certificate store
+    update-ca-trust
+    # Configure yum proxy settings
+    echo "proxy=$PROXY" | tee -a /etc/yum.conf >/dev/null
+    # Optionally, add proxy environment variables to ~/.bashrc
+    echo "export http_proxy=\"$PROXY\"" >> ~/.bashrc
+    echo "export https_proxy=\"$PROXY\"" >> ~/.bashrc
+    source ~/.bashrc
+    echo "[*] RHEL-based proxy and certificate configuration completed."
+}
+
+# --- Debian-Based Systems (also used for Ubuntu) ---
+function DEBIAN_proxy_setup {
+    echo "[*] Setting up proxy and installing certificate for Debian-based systems..."
+    apt update
+    apt install -y ca-certificates curl
+    # Download certificate files via the proxy
+    curl -o cert.crt --proxy "$PROXY" "$PATCH_URL"
+    curl -o certPem.pem --proxy "$PROXY" "$PEM_URL"
+    # Convert PEM file to CRT format (or simply rename)
+    mv certPem.pem certPem.crt
+    # Create extra directory if it does not exist
+    mkdir -p /usr/share/ca-certificates/extra
+    cp cert.crt /usr/share/ca-certificates/extra/cert.crt
+    cp certPem.crt /usr/share/ca-certificates/extra/certPem.crt
+    # Update certificates using dpkg and update-ca-certificates
+    dpkg-reconfigure ca-certificates
+    update-ca-certificates
+    # Configure apt to use the proxy
+    echo "Acquire::http::Proxy \"$PROXY\";" | tee /etc/apt/apt.conf.d/proxy.conf >/dev/null
+    echo "Acquire::https::Proxy \"$PROXY\";" | tee -a /etc/apt/apt.conf.d/proxy.conf >/dev/null
+    # Set proxy environment variables for current session
+    echo "export http_proxy=\"$PROXY\"" >> ~/.bashrc
+    echo "export https_proxy=\"$PROXY\"" >> ~/.bashrc
+    source ~/.bashrc
+    echo "[*] Debian-based proxy and certificate configuration completed."
+}
+
+function UBUNTU_proxy_setup {
+    echo "[*] Detected Ubuntu. Using Debian configuration..."
+    DEBIAN_proxy_setup
+}
+
+# --- Alpine Linux ---
+function ALPINE_proxy_setup {
+    echo "[*] Setting up proxy and installing certificate for Alpine Linux..."
+    apk add --no-cache ca-certificates curl
+    # Download the certificate file (using the CRT URL)
+    curl -o cert.pem --proxy "$PROXY" "$PATCH_URL"
+    cp cert.pem /usr/local/share/ca-certificates/
+    update-ca-certificates
+    # Configure repository proxy settings (if desired)
+    # Here, you might add proxy URLs to /etc/apk/repositories if required.
+    echo "export http_proxy=\"$PROXY\"" >> ~/.bashrc
+    echo "export https_proxy=\"$PROXY\"" >> ~/.bashrc
+    source ~/.bashrc
+    echo "[*] Alpine Linux proxy and certificate configuration completed."
+}
 
 
 ########################################################################
@@ -2367,8 +2388,9 @@ function show_web_hardening_menu {
     esac
 }
 
-
-##################### MAIN MENU FUNCTION #####################
+# --------------------------------------------------------------------
+# FUNCTION: show_menu
+# --------------------------------------------------------------------
 function show_menu {
     print_banner "Hardening Script Menu"
     echo "1) Full Hardening Process (Run all)"
@@ -2380,13 +2402,15 @@ function show_menu {
     echo "7) PAM/Profile Fixes & System Config"
     echo "8) Web Hardening"
     echo "9) Advanced Hardening"
-    echo "10) Setup Proxy and Install CA Certificates"   # New menu item
+    echo "10) Setup Proxy & Install CA Certificates"
     echo "11) Exit"
     echo
     read -p "Enter your choice [1-11]: " menu_choice
     echo
     case $menu_choice in
-        1) main ;;
+        1)
+            main
+            ;;
         2)
             detect_system_info
             install_prereqs
@@ -2420,13 +2444,15 @@ function show_menu {
             advanced_hardening
             ;;
         10)
-            setup_proxy_certificates_and_config   # Calls the new function
+            setup_proxy_certificates_and_config
             ;;
         11)
-            echo "Exiting..."; exit 0
+            echo "Exiting..."
+            exit 0
             ;;
         *)
-            echo "Invalid option. Exiting."; exit 1
+            echo "Invalid option. Exiting."
+            exit 1
             ;;
     esac
 }
