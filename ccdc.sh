@@ -2813,62 +2813,38 @@ function show_web_hardening_menu {
         disable_phpmyadmin
         return 0
     fi
-
     echo "1) Run Full Web Hardening Process"
     echo "2) backup_databases"
     echo "3) secure_php_ini"
     echo "4) Install ModSecurity (Dockerized)"
     echo "5) Install ModSecurity (Manual)"
     echo "6) my_secure_sql_installation"
-    echo "7) manage_web_immutability"
+    echo "7) Manage Web Immutability"   # <<--- Our new item
     echo "8) Disable phpMyAdmin"
     echo "9) Exit Web Hardening Menu"
-
     read -p "Enter your choice [1-9]: " web_menu_choice
     case $web_menu_choice in
         1)
             print_banner "Web Hardening Initiated"
             backup_databases
             secure_php_ini
-
-            # MANUAL WAF INSTALL by default
+            # (If you prefer the manual modsec by default, call that)
             install_modsecurity_manual
-
             my_secure_sql_installation
-
-            # place immutability AFTER modsecurity is done
-            manage_web_immutability
-
+            # omit or remove manage_web_immutability call
             ;;
-        2)
-            backup_databases
-            ;;
-        3)
-            secure_php_ini
-            ;;
-        4)
-            install_modsecurity_docker
-            ;;
-        5)
-            install_modsecurity_manual
-            ;;
-        6)
-            my_secure_sql_installation
-            ;;
-        7)
-            manage_web_immutability
-            ;;
-        8)
-            disable_phpmyadmin
-            ;;
-        9)
-            echo "[*] Exiting Web Hardening Menu"
-            ;;
-        *)
-            echo "[X] Invalid option."
-            ;;
+        2)  backup_databases ;;
+        3)  secure_php_ini ;;
+        4)  install_modsecurity_docker ;;
+        5)  install_modsecurity_manual ;;
+        6)  my_secure_sql_installation ;;
+        7)  manage_web_immutability_menu ;;   # <<--- The new function call
+        8)  disable_phpmyadmin ;;
+        9)  echo "[*] Exiting Web Hardening Menu" ;;
+        *)  echo "[X] Invalid option." ;;
     esac
 }
+
 
 
 # --------------------------------------------------------------------
