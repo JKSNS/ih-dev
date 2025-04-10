@@ -490,6 +490,78 @@ function setup_ufw {
     backup_current_ufw_rules
 }
 
+# --------------------------------------------------------------------
+# FUNCTION: configure_security_modules
+# --------------------------------------------------------------------
+# This function prompts the user for whether to enforce SELinux and
+#/or AppArmor. If the user chooses to enforce SELinux, it sets SELinux to
+#enforcing mode and updates the configuration file accordingly.
+#If the user chooses to enforce AppArmor, it updates package lists,
+#installs AppArmor profiles and extra profiles, enables and starts the
+#AppArmor service, and then enforces all AppArmor profiles.
+# --------------------------------------------------------------------
+function configure_security_modules {
+    print_banner "Configuring Security Modules (SELinux & AppArmor)"
+
+    # --- SELinux Enforcement ---
+    read -p "Do you want to enforce SELinux? (y/N): " selinux_choice
+    case "$selinux_choice" in
+        [Yy]*)
+            echo "Enforcing SELinux..."
+            # Enforce SELinux immediately
+            if command -v setenforce &>/dev/null; then
+                sudo setenforce 1
+            else
+                echo "[WARN] setenforce command not found. Ensure SELinux tools are installed."
+            fi
+            # Modify the SELinux configuration file to make the change persistent.
+            if [ -f /etc/selinux/config ]; then
+                sudo sed -i 's/^SELINUX=.*/SELINUX=enforcing/' /etc/selinux/config
+                echo "SELinux is now configured to be enforcing on reboot."
+            else
+                echo "[WARN] /etc/selinux/config not found; please verify your SELinux installation."
+            fi
+            sestatus
+            ;;
+        *)
+            echo "SELinux enforcement skipped."
+            ;;
+    esac
+
+    # --- AppArmor Enforcement ---
+    read -p "Do you want to enforce AppArmor? (y/N): " apparmor_choice
+    case "$apparmor_choice" in
+        [Yy]*)
+            echo "Enforcing AppArmor..."
+            # Update package list and install AppArmor profiles (Debian/Ubuntu only)
+            if command -v apt-get &>/dev/null; then
+                sudo apt-get update
+                sudo apt-get install -y apparmor-profiles apparmor-profiles-extra
+            else
+                echo "[WARN] apt-get not found. Please install AppArmor manually if required."
+            fi
+
+            # Enable and start the AppArmor service.
+            if command -v systemctl &>/dev/null; then
+                sudo systemctl enable apparmor
+                sudo systemctl start apparmor
+            else
+                echo "[WARN] systemctl not available; please start AppArmor manually."
+            fi
+
+            # Enforce all available AppArmor profiles.
+            sudo aa-enforce /etc/apparmor.d/*
+            echo "Current AppArmor status:"
+            aa-status
+            ;;
+        *)
+            echo "AppArmor enforcement skipped."
+            ;;
+    esac
+
+    print_banner "Security Modules Configuration Completed"
+}
+
 
 # ============================================================
 # FUNCTION: setup_proxy_certificates_and_config
@@ -2268,19 +2340,20 @@ function advanced_hardening {
     fi
     local adv_choice
     while true; do
-        print_banner "Advanced Hardening & Automation #TESTING, JUST PLACEHOLDERS"
+        print_banner "Advanced Hardening & Automation Menu"
         echo "1) Run Full Advanced Hardening Process"
         echo "2) Set up iptables persistence cronjob"
         echo "3) Disable SSHD/Cockpit services"
-        echo "4) Set up firewall maintenance cronjob (monitor open ports)"
+        echo "4) Set up firewall maintenance cronjob"
         echo "5) Set up cronjob to clear NAT table"
         echo "6) Set up cronjob to restart firewall service and additional services"
         echo "7) Reset Advanced Hardening Configurations"
         echo "8) Run rkhunter scan"
         echo "9) Check Service Integrity"
         echo "10) Fix Web Browser Permissions"
-        echo "11) Exit Advanced Hardening Menu"
-        read -p "Enter your choice [1-11]: " adv_choice
+        echo "11) Configure SELinux and AppArmor"
+        echo "12) Exit Advanced Hardening Menu"
+        read -p "Enter your choice [1-12]: " adv_choice
         case $adv_choice in
             1) run_full_advanced_hardening ;;
             2) setup_iptables_cronjob ;;
@@ -2292,13 +2365,13 @@ function advanced_hardening {
             8) run_rkhunter ;;
             9) check_service_integrity ;;
             10) fix_web_browser ;;
-            11) echo "[*] Exiting advanced hardening menu."; break ;;
+            11) configure_security_modules ;;
+            12) echo "[*] Exiting advanced hardening menu."; break ;;
             *) echo "[X] Invalid option." ;;
         esac
         echo ""
     done
 }
-
 
 
 
