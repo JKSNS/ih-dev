@@ -1506,10 +1506,45 @@ function backup_databases {
     fi
 }
 
+#function secure_php_ini {
+#    print_banner "Securing php.ini Files"
+#    for ini in $(find / -name "php.ini" 2>/dev/null); do
+#        echo "[+] Writing php.ini options to $ini..."
+#        echo "disable_functions = shell_exec, exec, passthru, proc_open, popen, system, phpinfo" >> "$ini"
+#        echo "max_execution_time = 3" >> "$ini"
+#        echo "register_globals = off" >> "$ini"
+#        echo "magic_quotes_gpc = on" >> "$ini"
+#        echo "allow_url_fopen = off" >> "$ini"
+#        echo "allow_url_include = off" >> "$ini"
+#        echo "display_errors = off" >> "$ini"
+#        echo "short_open_tag = off" >> "$ini"
+#        echo "session.cookie_httponly = 1" >> "$ini"
+#        echo "session.use_only_cookies = 1" >> "$ini"
+#        echo "session.cookie_secure = 1" >> "$ini"
+#    done
+#}
+
 function secure_php_ini {
     print_banner "Securing php.ini Files"
+
     for ini in $(find / -name "php.ini" 2>/dev/null); do
-        echo "[+] Writing php.ini options to $ini..."
+        echo "[+] Updating php.ini at $ini..."
+
+        # 1) Remove any existing lines for these directives.
+        #    This way, we won’t stack them repeatedly.
+        sed -i '/^disable_functions/d'           "$ini"
+        sed -i '/^max_execution_time/d'          "$ini"
+        sed -i '/^register_globals/d'            "$ini"
+        sed -i '/^magic_quotes_gpc/d'            "$ini"
+        sed -i '/^allow_url_fopen/d'             "$ini"
+        sed -i '/^allow_url_include/d'           "$ini"
+        sed -i '/^display_errors/d'              "$ini"
+        sed -i '/^short_open_tag/d'              "$ini"
+        sed -i '/^session.cookie_httponly/d'      "$ini"
+        sed -i '/^session.use_only_cookies/d'     "$ini"
+        sed -i '/^session.cookie_secure/d'        "$ini"
+
+        # 2) Append your chosen directives at the end.
         echo "disable_functions = shell_exec, exec, passthru, proc_open, popen, system, phpinfo" >> "$ini"
         echo "max_execution_time = 3" >> "$ini"
         echo "register_globals = off" >> "$ini"
@@ -1520,10 +1555,21 @@ function secure_php_ini {
         echo "short_open_tag = off" >> "$ini"
         echo "session.cookie_httponly = 1" >> "$ini"
         echo "session.use_only_cookies = 1" >> "$ini"
-        echo "session.cookie_secure = 1" >> "$ini"
-    done
-}
 
+        # 3) Ask if the site is running HTTPS, then set session.cookie_secure accordingly.
+        read -p "Is your website using HTTPS? (y/N): " use_https
+        if [[ "$use_https" =~ ^[Yy]$ ]]; then
+            echo "session.cookie_secure = 1" >> "$ini"
+        else
+            # If you prefer an explicit directive rather than skipping it:
+            echo "session.cookie_secure = 0" >> "$ini"
+        fi
+    done
+
+    # 4) Optionally, restart or reload Apache/PHP-FPM to apply new settings:
+    # systemctl restart apache2
+    # or systemctl restart php7.4-fpm
+}
 
 
 
