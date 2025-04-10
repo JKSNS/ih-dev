@@ -1344,18 +1344,17 @@ function backup_directories {
 
 ########################################################################
 # FUNCTION: unencrypt_backups
-# Updated to:
-#   - Prompt for password only once per attempt
-#   - Allow up to 3 attempts if the decryption fails
-#   - Remove confirmation password
+# Prompts the user for the base name of the encrypted archive (without extension),
+# allows up to 3 attempts for decryption, and then prompts for one or more extraction
+# directories. If the user enters no extraction directories, the decrypted file
+# remains for manual extraction.
 ########################################################################
 function unencrypt_backups {
     print_banner "Decrypt Backup"
 
-    # Prompt the user to enter the base name of the encrypted archive (without extension).
-    # e.g., If your encrypted archive is "backup.zip.enc", type only "backup".
+    # Prompt for the base name of the archive (without the extension)
     while true; do
-        read -p "Enter the base name of the encrypted backup (do not include .zip.enc): " base_archive
+        read -p "Enter the base name of the encrypted backup (do NOT include .zip.enc): " base_archive
         if [ -z "$base_archive" ]; then
             echo "[X] No base name provided. Please try again."
             continue
@@ -1363,33 +1362,30 @@ function unencrypt_backups {
 
         encrypted_file="${base_archive}.zip.enc"
         if [ ! -f "$encrypted_file" ]; then
-            echo "[X] ERROR: File '$encrypted_file' does not exist in this directory."
+            echo "[X] ERROR: File '$encrypted_file' does not exist in the current directory."
             echo "[*] Make sure you are in the correct path or re-enter the base name."
         else
             break
         fi
     done
 
-    # We'll allow 3 attempts if the user enters a bad password.
+    # Allow up to 3 attempts for decryption with a single password entry per try.
     local max_attempts=3
     local attempt=1
     local success_decrypt=false
-
-    temp_output="decrypted_backup.zip"
+    local temp_output="decrypted_backup.zip"
 
     while [ $attempt -le $max_attempts ]; do
         pass1=$(get_silent_input_string "Enter decryption password for $encrypted_file (Attempt $attempt of $max_attempts): ")
         echo
-
-        # Decrypt the file; output a temporary file named "decrypted_backup.zip".
-        # Quietly check if it fails.
+        # Attempt decryption quietly (suppress standard error)
         openssl enc -d -aes-256-cbc -in "$encrypted_file" -out "$temp_output" -k "$pass1" 2>/dev/null
         if [ $? -ne 0 ]; then
             echo "[X] ERROR: Decryption failed. Possibly a wrong password."
             if [ $attempt -lt $max_attempts ]; then
                 echo "[*] Please try again."
             else
-                echo "[X] Too many failed attempts. Aborting."
+                echo "[X] Too many failed attempts. Aborting decryption."
                 rm -f "$temp_output"
                 return 1
             fi
@@ -1402,17 +1398,17 @@ function unencrypt_backups {
     done
 
     if [ "$success_decrypt" != true ]; then
-        echo "[X] All attempts failed. No decryption performed."
+        echo "[X] All decryption attempts failed."
         rm -f "$temp_output"
         return 1
     fi
 
-    # Ask the user to enter one or more extraction directories.
-    echo "Enter the directories to extract the decrypted archive into."
-    echo "Enter one directory per line. Press ENTER on a blank line to finish."
+    # Prompt user for one or more extraction directories.
+    echo "Enter the directories to extract the decrypted backup into."
+    echo "Type one directory per line. When you are finished, just press ENTER on a blank line."
     extract_dirs=()
     while true; do
-        read -r -p "Extraction directory: " exdir
+        read -p "Extraction directory: " exdir
         if [ -z "$exdir" ]; then
             break
         else
@@ -1420,21 +1416,22 @@ function unencrypt_backups {
         fi
     done
 
-    # If directories were provided, extract the archive into each one.
+    # If the user provided at least one extraction directory, extract the backup there.
     if [ ${#extract_dirs[@]} -gt 0 ]; then
         for dir in "${extract_dirs[@]}"; do
             # Ensure the extraction directory exists.
             mkdir -p "$dir"
-            # Quietly unzip the decrypted archive into the directory.
+            # Quietly extract the decrypted archive using unzip's quiet mode (-q)
             unzip -q "$temp_output" -d "$dir"
-            echo "[*] Backup extracted to $dir"
+            echo "[*] Backup extracted to: $dir"
         done
-        # Remove the temporary decrypted file after extraction.
+        # Clean up temporary decrypted file.
         rm -f "$temp_output"
     else
-        echo "[*] No extraction directories provided. The decrypted archive remains as $temp_output"
+        echo "[*] No extraction directories provided. The decrypted archive remains as '$temp_output'."
     fi
 }
+
 
 
 
