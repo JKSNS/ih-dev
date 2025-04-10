@@ -1790,6 +1790,36 @@ function install_modsecurity_docker {
     fi
 }
 
+# New function: fix_modsecurity_audit_log
+function fix_modsecurity_audit_log {
+    local log_dir="/var/log/apache2"
+    local audit_log="${log_dir}/modsec_audit.log"
+
+    echo "[*] Fixing ModSecurity audit log issues..."
+
+    # Ensure that the log directory exists
+    if [ ! -d "$log_dir" ]; then
+        echo "[*] Log directory $log_dir does not exist. Creating..."
+        sudo mkdir -p "$log_dir"
+    fi
+
+    # Create the audit log file if it does not exist
+    if [ ! -f "$audit_log" ]; then
+        echo "[*] Audit log file $audit_log not found. Creating..."
+        sudo touch "$audit_log"
+    fi
+
+    # Remove immutable flags on the log directory and its contents (if any)
+    echo "[*] Removing immutable flags (if any) from $log_dir..."
+    sudo chattr -R -i "$log_dir" 2>/dev/null
+
+    # Set correct ownership and permissions for the log file
+    echo "[*] Setting ownership and permissions on $audit_log..."
+    sudo chown www-data:www-data "$audit_log"
+    sudo chmod 640 "$audit_log"
+
+    echo "[*] Audit log file fixed: $audit_log"
+}
 
 ########################################################################
 # FUNCTION: install_modsecurity_manual
