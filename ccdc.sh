@@ -1994,46 +1994,59 @@ function my_secure_sql_installation {
     fi
 }
 
+########################################################################
+# FUNCTION: manage_web_immutability
+# Scans for critical web directories and then, if approved by the user,
+# recursively sets (or removes) the immutable flag (-R +i or -R -i) on 
+# each directory found.
+########################################################################
 function manage_web_immutability {
     print_banner "Manage Web Directory Immutability"
     if [ "$ANSIBLE" == "true" ]; then
          echo "[*] Ansible mode: Skipping immutable flag changes on web directories."
          return 0
     fi
+
+    # List of default critical web directories
     default_web_dirs=( "/etc/nginx" "/etc/apache2" "/usr/share/nginx" "/var/www" "/var/www/html" "/etc/lighttpd" "/etc/mysql" "/etc/postgresql" "/var/lib/apache2" "/var/lib/mysql" "/etc/redis" "/etc/phpMyAdmin" "/etc/php.d" )
     detected_web_dirs=()
+
     echo "[*] Scanning for critical web directories..."
     for dir in "${default_web_dirs[@]}"; do
         if [ -d "$dir" ]; then
             detected_web_dirs+=("$dir")
         fi
     done
+
     if [ ${#detected_web_dirs[@]} -eq 0 ]; then
         echo "[*] No critical web directories were found."
         return
     fi
+
     echo "[*] The following web directories have been detected:"
     for d in "${detected_web_dirs[@]}"; do
         echo "    $d"
     done
-    read -p "Would you like to set these directories to immutable? (y/N): " imm_choice
+
+    read -p "Would you like to set these directories to immutable (recursively)? (y/N): " imm_choice
     if [[ "$imm_choice" == "y" || "$imm_choice" == "Y" ]]; then
         for d in "${detected_web_dirs[@]}"; do
-            sudo chattr +i "$d"
-            echo "[*] Set immutable flag on $d"
+            sudo chattr -R +i "$d"
+            echo "[*] Set immutable flag recursively on $d"
         done
     else
-        read -p "Would you like to remove the immutable flag from these directories? (y/N): " unimm_choice
+        read -p "Would you like to remove the immutable flag from these directories (recursively)? (y/N): " unimm_choice
         if [[ "$unimm_choice" == "y" || "$unimm_choice" == "Y" ]]; then
             for d in "${detected_web_dirs[@]}"; do
-                sudo chattr -i "$d"
-                echo "[*] Removed immutable flag from $d"
+                sudo chattr -R -i "$d"
+                echo "[*] Removed immutable flag recursively from $d"
             done
         else
             echo "[*] No changes made to web directory immutability."
         fi
     fi
 }
+
 
 
 function kill_other_sessions {
