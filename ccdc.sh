@@ -1572,77 +1572,56 @@ function install_modsecurity_docker {
 }
 
 
-# Manual ModSecurity installation function (strict mode).
-# This function is available only via the menu (not run by default).
-# Manual ModSecurity installation function (Strict Mode, built from source).
-# This function is available only via the menu (not run by default).
+# --------------------------------------------------------------------
+# FUNCTION: install_modsecurity_manual
+# --------------------------------------------------------------------
+# This function installs ModSecurity for Apache in strict mode on
+# Debian-based systems. For RHEL/CentOS or Alpine, it prints a message
+# indicating that the procedure is not implemented. The firewall bits
+# (opening and closing iptables OUTPUT policy) have been removed because
+# your firewall configuration already permits outbound traffic on ports
+# 80, 443, and 53.
+# --------------------------------------------------------------------
 function install_modsecurity_manual {
-    print_banner "Manual ModSecurity Installation (Strict Mode, Build from Source)"
-
-    # --- Install build dependencies based on the package manager ---
-    echo "[*] Installing build dependencies for ModSecurity..."
-    if [ "$pm" == "apt-get" ]; then
-        sudo apt-get update -y
-        sudo apt-get install -y git build-essential autoconf automake libtool pkg-config \
-             libxml2 libxml2-dev libyajl-dev libcurl4-openssl-dev doxygen
-    elif [ "$pm" == "yum" ] || [ "$pm" == "dnf" ]; then
-        sudo $pm install -y git gcc-c++ make autoconf automake libtool pkgconfig \
-             libxml2-devel yajl-devel curl-devel doxygen
-    elif [ "$pm" == "zypper" ]; then
-        sudo zypper refresh
-        sudo zypper install -y git gcc-c++ make autoconf automake libtool pkg-config \
-             libxml2-devel yajl-devel libcurl-devel doxygen
+    
+    # Detect the package manager to decide which installation branch to use.
+    if command -v yum &>/dev/null; then
+        echo "RHEL-based manual ModSecurity installation is not implemented."
+        return 1
+    elif command -v apt-get &>/dev/null; then
+        echo "[*] Updating package list for Debian-based system..."
+        apt-get update
+        echo "[*] Installing libapache2-mod-security2..."
+        apt-get -y install libapache2-mod-security2
+        
+        echo "[*] Enabling ModSecurity in Apache..."
+        a2enmod security2
+        
+        echo "[*] Deploying strict configuration for ModSecurity..."
+        # Copy the recommended configuration file as a starting point.
+        cp /etc/modsecurity/modsecurity.conf-recommended /etc/modsecurity/modsecurity.conf
+        
+        # Modify the configuration to set the rule engine to "On".
+        sed -i 's/SecRuleEngine DetectionOnly/SecRuleEngine On/g' /etc/modsecurity/modsecurity.conf
+        
+        echo "[*] Restarting Apache to apply ModSecurity changes..."
+        # Depending on your system, the Apache service might be called "apache2" or "httpd".
+        if systemctl is-active apache2 &>/dev/null; then
+            systemctl restart apache2
+        elif systemctl is-active httpd &>/dev/null; then
+            systemctl restart httpd
+        else
+            echo "[WARN] Apache service not detected. Please restart your web server manually."
+        fi
+    elif command -v apk &>/dev/null; then
+        echo "Alpine-based manual ModSecurity installation is not implemented."
+        return 1
     else
-        echo "[X] Unsupported package manager for building from source."
+        echo "Unsupported distribution for manual ModSecurity installation."
         return 1
     fi
 
-    # --- Clone (or update) the ModSecurity source code ---
-    echo "[*] Cloning/updating ModSecurity source..."
-    if [ ! -d "/usr/local/src/ModSecurity" ]; then
-        sudo git clone --depth=1 https://github.com/SpiderLabs/ModSecurity /usr/local/src/ModSecurity
-    else
-        echo "[*] ModSecurity source already exists. Updating..."
-        cd /usr/local/src/ModSecurity || { echo "[X] Cannot change directory to /usr/local/src/ModSecurity"; return 1; }
-        sudo git pull
-    fi
-
-    cd /usr/local/src/ModSecurity || { echo "[X] Cannot change directory to /usr/local/src/ModSecurity"; return 1; }
-    # Initialize and update submodules
-    sudo git submodule init
-    sudo git submodule update
-
-    # --- Build and install ModSecurity from source ---
-    echo "[*] Building ModSecurity from source..."
-    sudo ./build.sh
-    sudo ./configure
-    sudo make
-    sudo make install
-    echo "[*] ModSecurity built and installed successfully."
-
-    # --- Deploy a strict ModSecurity configuration ---
-    echo "[*] Deploying strict ModSecurity configuration..."
-    local strict_conf
-    strict_conf=$(generate_strict_modsec_conf)
-    # Ensure the target directory exists
-    sudo mkdir -p /etc/modsecurity
-    sudo cp "$strict_conf" /etc/modsecurity/modsecurity.conf
-
-    # --- Restart Apache service to load the new module (if applicable) ---
-    echo "[*] Restarting Apache to apply changes..."
-    if command -v systemctl &>/dev/null; then
-        if systemctl is-active apache2 &>/dev/null; then
-            sudo systemctl restart apache2
-        elif systemctl is-active httpd &>/dev/null; then
-            sudo systemctl restart httpd
-        else
-            echo "[WARN] Apache service not detected. Please restart your webserver manually."
-        fi
-    else
-        sudo service apache2 restart 2>/dev/null || sudo service httpd restart 2>/dev/null
-    fi
-
-    echo "[*] Manual ModSecurity installation from source completed."
+    echo "[*] Manual ModSecurity installation (strict mode) completed."
 }
 
 
