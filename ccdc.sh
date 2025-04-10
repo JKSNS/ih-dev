@@ -2705,23 +2705,18 @@ function advanced_hardening {
 ##################### WEB HARDENING MENU FUNCTION #####################
 function show_web_hardening_menu {
     print_banner "Web Hardening Menu"
-    if [ "$ANSIBLE" == "true" ]; then
-        echo "[*] Ansible mode: Running full web hardening non-interactively."
-        harden_web
-        disable_phpmyadmin
-        return 0
-    fi
     echo "1) Run Full Web Hardening Process"
-    echo "2) backup_databases"
-    echo "3) secure_php_ini"
-    echo "4) Install ModSecurity (Dockerized) [Default]"
+    echo "2) Backup Databases"
+    echo "3) Secure php.ini Files"
+    echo "4) Install ModSecurity (Dockerized)"
     echo "5) Install ModSecurity (Manual)"
-    echo "6) my_secure_sql_installation"
-    echo "7) manage_web_immutability"
+    echo "6) Run My Secure SQL Installation"
+    echo "7) Manage Web Directory Immutability"
     echo "8) Disable phpMyAdmin"
-    echo "9) Exit Web Hardening Menu"
-    read -p "Enter your choice [1-9]: " web_menu_choice
-    case $web_menu_choice in
+    echo "9) Backup or Restore Non-Immutable Directories"
+    echo "0) Exit Web Hardening Menu"
+    read -p "Enter your choice: " web_choice
+    case $web_choice in
         1)
             print_banner "Web Hardening Initiated"
             backup_databases
@@ -2731,34 +2726,30 @@ function show_web_hardening_menu {
             manage_web_immutability
             ;;
         2)
-            print_banner "Web Hardening Initiated"
             backup_databases
             ;;
         3)
-            print_banner "Web Hardening Initiated"
             secure_php_ini
             ;;
         4)
-            print_banner "Web Hardening Initiated (Dockerized ModSecurity)"
             install_modsecurity_docker
             ;;
         5)
-            print_banner "Web Hardening Initiated (Manual ModSecurity)"
             install_modsecurity_manual
             ;;
         6)
-            print_banner "Web Hardening Initiated"
             my_secure_sql_installation
             ;;
         7)
-            print_banner "Web Hardening Initiated"
             manage_web_immutability
             ;;
         8)
-            print_banner "Disabling phpMyAdmin"
             disable_phpmyadmin
             ;;
         9)
+            handle_non_immutable_dirs
+            ;;
+        0)
             echo "[*] Exiting Web Hardening Menu"
             ;;
         *)
@@ -2766,6 +2757,7 @@ function show_web_hardening_menu {
             ;;
     esac
 }
+
 
 # --------------------------------------------------------------------
 # FUNCTION: show_menu
