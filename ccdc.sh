@@ -1350,61 +1350,76 @@ function backup_directories {
 ########################################################################
 function unencrypt_backups {
     print_banner "Decrypt Backup"
+    
+    # Prompt the user to enter the base name of the encrypted archive (without extension).
+    # Example: If your encrypted archive is "backup.zip.enc", enter "backup".
     while true; do
-        encrypted_file=$(get_input_string "Enter path to the encrypted backup file: ")
-        encrypted_file=$(readlink -f "$encrypted_file")
-        if [ ! -f "$encrypted_file" ]; then
-            echo "[X] ERROR: File '$encrypted_file' does not exist."
-            dir=$(dirname "$encrypted_file")
-            base=$(basename "$encrypted_file")
-            echo "[*] Searching for similar files in '$dir'..."
-            similar_files=$(find "$dir" -maxdepth 1 -iname "*${base}*" 2>/dev/null)
-            if [ -n "$similar_files" ]; then
-                echo "[*] Similar files found:"
-                echo "$similar_files"
-            else
-                echo "[*] No similar files found."
-            fi
-            echo "[*] Please try again."
+        read -p "Enter the base name of the encrypted backup (do not include .zip.enc): " base_archive
+        if [ -z "$base_archive" ]; then
+            echo "[X] No base name provided. Please try again."
         else
-            break
+            encrypted_file="${base_archive}.zip.enc"
+            if [ ! -f "$encrypted_file" ]; then
+                echo "[X] ERROR: File '$encrypted_file' does not exist."
+                # Optionally search for similar files or prompt again.
+            else
+                break
+            fi
         fi
     done
+
+    # Prompt for the decryption password twice.
     while true; do
-        dec_password=$(get_silent_input_string "Enter decryption password: ")
+        pass1=$(get_silent_input_string "Enter decryption password for $encrypted_file: ")
         echo
-        dec_confirm=$(get_silent_input_string "Confirm decryption password: ")
+        pass2=$(get_silent_input_string "Confirm decryption password: ")
         echo
-        if [ "$dec_password" != "$dec_confirm" ]; then
+        if [ "$pass1" != "$pass2" ]; then
             echo "Passwords do not match. Please retry."
         else
             break
         fi
     done
+
+    # Decrypt the file; output a temporary file.
     temp_output="decrypted_backup.zip"
-    openssl enc -d -aes-256-cbc -in "$encrypted_file" -out "$temp_output" -k "$dec_password"
+    openssl enc -d -aes-256-cbc -in "$encrypted_file" -out "$temp_output" -k "$pass1"
     if [ $? -ne 0 ]; then
         echo "[X] ERROR: Decryption failed. Check your password."
         rm -f "$temp_output"
-        return
+        return 1
     fi
-    echo "[*] Decryption successful. Decrypted archive: $temp_output"
-    if [ "$ANSIBLE" == "true" ]; then
-        echo "[*] Ansible mode: Skipping extraction of decrypted archive."
-    else
-        read -p "Would you like to extract the decrypted archive? (y/N): " extract_choice
-        if [[ "$extract_choice" == "y" || "$extract_choice" == "Y" ]]; then
-            read -p "Enter directory to extract the backup: " extract_dir
-            extract_dir=$(readlink -f "$extract_dir")
-            mkdir -p "$extract_dir"
-            unzip "$temp_output" -d "$extract_dir"
-            echo "[*] Backup extracted to $extract_dir"
-            rm -f "$temp_output"
+    echo "[*] Decryption successful. Decrypted archive created as $temp_output."
+
+    # Ask the user to enter one or more extraction directories.
+    echo "Enter the directories in which to extract the decrypted archive."
+    echo "Enter one directory per prompt. To finish, just press ENTER without typing a directory."
+    extract_dirs=()
+    while true; do
+        read -r -p "Extraction directory: " exdir
+        if [ -z "$exdir" ]; then
+            break
         else
-            echo "[*] Decrypted archive remains as $temp_output"
+            extract_dirs+=("$exdir")
         fi
+    done
+
+    # If directories were provided, extract the archive into each one.
+    if [ ${#extract_dirs[@]} -gt 0 ]; then
+        for dir in "${extract_dirs[@]}"; do
+            # Ensure the extraction directory exists.
+            mkdir -p "$dir"
+            # Quietly unzip the decrypted archive into the directory.
+            unzip -q "$temp_output" -d "$dir"
+            echo "[*] Backup extracted to $dir"
+        done
+        # Remove the temporary decrypted file after extraction.
+        rm -f "$temp_output"
+    else
+        echo "[*] No extraction directories provided. The decrypted archive remains as $temp_output"
     fi
 }
+
 
 # In Ansible mode, skip the backup section entirely.
 function backups {
