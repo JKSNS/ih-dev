@@ -1207,7 +1207,7 @@ function firewall_configuration_menu {
 function backup_directories {
     print_banner "Backup Directories"
 
-    default_dirs=( "/etc/nginx" "/etc/apache2" "/usr/share/nginx" "/var/www" "/var/www/html" "/etc/lighttpd" "/etc/mysql" "/etc/postgresql" "/var/lib/apache2" "/var/lib/mysql" "/etc/redis" "/etc/phpMyAdmin" "/etc/php.d" )
+    default_dirs=( "/etc/nginx" "/etc/apache2" "/usr/share/nginx" "/var/www/html" "/etc/lighttpd" "/etc/mysql" "/etc/postgresql" "/var/lib/apache2" "/var/lib/mysql" "/etc/redis" "/etc/phpMyAdmin" "/etc/php.d" )
     detected_dirs=()
     echo "[*] Scanning for critical directories..."
     for d in "${default_dirs[@]}"; do
