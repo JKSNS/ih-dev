@@ -2907,17 +2907,18 @@ function show_web_hardening_menu {
     echo "3) Install ModSecurity (Dockerized)"
     echo "4) Backup Databases"
     echo "5) Secure php.ini Files"
-    echo "6) Run MySQL Secure Installation"
-    echo "7) Manage Web Directory Immutability"
-    echo "8) Disable phpMyAdmin"
-    echo "9) Exit Web Hardening Menu"
-    read -p "Enter your choice [1-9]: " web_menu_choice
+    echo "6) Configure Apache .htaccess"
+    echo "7) Run MySQL Secure Installation"
+    echo "8) Manage Web Directory Immutability"
+    echo "9) Disable phpMyAdmin"
+    echo "10) Exit Web Hardening Menu"
+    read -p "Enter your choice [1-10]: " web_menu_choice
+    echo
+
     case $web_menu_choice in
         1)
             print_banner "Web Hardening Initiated"
-            # Perform manual ModSecurity installation first
             install_modsecurity_manual
-            # Then continue with the remaining steps
             backup_databases
             secure_php_ini
             configure_apache_htaccess
@@ -2934,21 +2935,30 @@ function show_web_hardening_menu {
             install_modsecurity_docker
             ;;
         4)
+            print_banner "Backing Up Databases"
             backup_databases
             ;;
         5)
+            print_banner "Securing php.ini Files"
             secure_php_ini
             ;;
         6)
-            my_secure_sql_installation
+            print_banner "Configuring Apache .htaccess"
+            configure_apache_htaccess
             ;;
         7)
-            manage_web_immutability
+            print_banner "Running MySQL Secure Installation"
+            my_secure_sql_installation
             ;;
         8)
-            disable_phpmyadmin
+            print_banner "Managing Web Directory Immutability"
+            manage_web_immutability
             ;;
         9)
+            print_banner "Disabling phpMyAdmin"
+            disable_phpmyadmin
+            ;;
+        10)
             echo "[*] Exiting Web Hardening Menu"
             ;;
         *)
@@ -2956,6 +2966,7 @@ function show_web_hardening_menu {
             ;;
     esac
 }
+
 
 
 
