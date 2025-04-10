@@ -1520,7 +1520,7 @@ function secure_php_ini {
         echo "short_open_tag = off" >> "$ini"
         echo "session.cookie_httponly = 1" >> "$ini"
         echo "session.use_only_cookies = 1" >> "$ini"
-        echo "session.cookie_secure = 1" >> "$ini"
+        # echo "session.cookie_secure = 1" >> "$ini"
     done
 }
 
