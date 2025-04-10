@@ -1203,29 +1203,15 @@ function firewall_configuration_menu {
 
 ########################################################################
 # FUNCTION: backup_directories
-# Adjusted critical directories: removed "/var/www", kept "/var/www/html"
 ########################################################################
 function backup_directories {
     print_banner "Backup Directories"
 
-    # Updated default list: removed "/var/www"
-    default_dirs=(
-        "/etc/nginx"
-        "/etc/apache2"
-        "/usr/share/nginx"
-        "/var/www/html"
-        "/etc/lighttpd"
-        "/etc/mysql"
-        "/etc/postgresql"
-        "/var/lib/apache2"
-        "/var/lib/mysql"
-        "/etc/redis"
-        "/etc/phpMyAdmin"
-        "/etc/php.d"
-    )
+    # Adjust this list so that /var/www/html is used instead of both /var/www & /var/www/html
+    default_dirs=( "/var/www/html" "/etc/apache2" "/etc/mysql" "/var/lib/apache2" "/var/lib/mysql" )
 
-    echo "[*] Scanning for critical directories..."
     detected_dirs=()
+    echo "[*] Scanning for critical directories..."
     for d in "${default_dirs[@]}"; do
         if [ -d "$d" ]; then
             detected_dirs+=("$d")
@@ -1238,33 +1224,27 @@ function backup_directories {
         for d in "${detected_dirs[@]}"; do
             echo "   $d"
         done
-        if [ "$ANSIBLE" == "true" ]; then
+        read -p "Would you like to back these up? (y/N): " detected_choice
+        if [[ "$detected_choice" == "y" || "$detected_choice" == "Y" ]]; then
             backup_list=("${detected_dirs[@]}")
-            echo "[*] Ansible mode: Automatically backing up detected directories."
-        else
-            read -p "Would you like to back these up? (y/N): " detected_choice
-            if [[ "$detected_choice" == "y" || "$detected_choice" == "Y" ]]; then
-                backup_list=("${detected_dirs[@]}")
-            fi
         fi
     else
         echo "[*] No critical directories detected."
     fi
 
-    if [ "$ANSIBLE" != "true" ]; then
-        read -p "Would you like to backup any additional files or directories? (y/N): " additional_choice
-        if [[ "$additional_choice" == "y" || "$additional_choice" == "Y" ]]; then
-            echo "[*] Enter additional directories/files to backup (one per line; hit ENTER on a blank line to finish):"
-            additional_dirs=$(get_input_list)
-            for item in $additional_dirs; do
-                path=$(readlink -f "$item")
-                if [ -e "$path" ]; then
-                    backup_list+=("$path")
-                else
-                    echo "[X] ERROR: $path does not exist."
-                fi
-            done
-        fi
+    echo
+    read -p "Would you like to backup any additional files or directories? (y/N): " additional_choice
+    if [[ "$additional_choice" == "y" || "$additional_choice" == "Y" ]]; then
+        echo "[*] Enter additional directories/files to backup (one per line; hit ENTER on a blank line to finish):"
+        additional_dirs=$(get_input_list)
+        for item in $additional_dirs; do
+            path=$(readlink -f "$item")
+            if [ -e "$path" ]; then
+                backup_list+=("$path")
+            else
+                echo "[X] ERROR: $path does not exist."
+            fi
+        done
     fi
 
     if [ ${#backup_list[@]} -eq 0 ]; then
@@ -1272,15 +1252,19 @@ function backup_directories {
         return
     fi
 
+    # Prompt for a name for the backup archive.
+    local backup_name=""
     while true; do
         backup_name=$(get_input_string "Enter a name for the backup archive (without extension .zip): ")
-        if [ "$backup_name" != "" ]; then
+        if [ -n "$backup_name" ]; then
+            # Ensure it has a .zip extension
             if [[ "$backup_name" != *.zip ]]; then
                 backup_name="${backup_name}.zip"
             fi
             break
+        else
+            echo "[X] ERROR: Backup name cannot be blank."
         fi
-        echo "[X] ERROR: Backup name cannot be blank."
     done
 
     echo "[*] Creating archive..."
@@ -1289,14 +1273,15 @@ function backup_directories {
         echo "[X] ERROR: Failed to create archive."
         return
     fi
-
     echo "[*] Archive created: $backup_name"
 
+    # Now encrypt the .zip file
     echo "[*] Encrypting the archive."
+    local enc_password=""
     while true; do
         enc_password=$(get_silent_input_string "Enter encryption password: ")
         echo
-        enc_confirm=$(get_silent_input_string "Confirm encryption password: ")
+        local enc_confirm=$(get_silent_input_string "Confirm encryption password: ")
         echo
         if [ "$enc_password" != "$enc_confirm" ]; then
             echo "Passwords do not match. Please retry."
@@ -1305,119 +1290,154 @@ function backup_directories {
         fi
     done
 
-    enc_archive="${backup_name}.enc"
+    local enc_archive="${backup_name}.enc"
     openssl enc -aes-256-cbc -salt -in "$backup_name" -out "$enc_archive" -k "$enc_password"
     if [ $? -ne 0 ]; then
         echo "[X] ERROR: Encryption failed."
         return
     fi
-
     echo "[*] Archive encrypted: $enc_archive"
 
+    # Ask user for multiple directories in which to copy the .enc file
+    echo
+    echo "[*] Provide directories where you'd like to COPY the encrypted backup."
+    echo "[*] Enter one directory path per line. Press ENTER on a blank line to finish."
     while true; do
-        storage_dir=$(get_input_string "Enter directory to store the encrypted backup: ")
-        storage_dir=$(readlink -f "$storage_dir")
-        if [ -d "$storage_dir" ]; then
+        local user_dir
+        user_dir=$(get_input_string "Directory to store the encrypted backup (blank to finish): ")
+        if [ -z "$user_dir" ]; then
+            echo "[*] Done storing the encrypted backup in specified directories."
             break
-        else
-            echo "[*] Directory does not exist. Creating it..."
-            sudo mkdir -p "$storage_dir"
-            if [ $? -eq 0 ]; then
-                break
-            else
-                echo "[X] ERROR: Could not create directory."
+        fi
+
+        user_dir=$(readlink -f "$user_dir")
+        if [ ! -d "$user_dir" ]; then
+            echo "[*] Directory '$user_dir' does not exist. Creating it..."
+            sudo mkdir -p "$user_dir"
+            if [ $? -ne 0 ]; then
+                echo "[X] ERROR: Could not create directory '$user_dir'. Skipping..."
+                continue
             fi
+        fi
+
+        # Copy the .enc file into that directory
+        cp "$enc_archive" "$user_dir/"
+        if [ $? -eq 0 ]; then
+            echo "[*] Encrypted archive copied to $user_dir/"
+        else
+            echo "[X] ERROR: Failed to copy encrypted archive to $user_dir/"
         fi
     done
 
-    sudo mv "$enc_archive" "$storage_dir/"
-    if [ $? -eq 0 ]; then
-        echo "[*] Encrypted archive moved to $storage_dir"
-    else
-        echo "[X] ERROR: Failed to move encrypted archive."
-    fi
+    # (Optional) If you do NOT want to keep the .enc file in the current dir,
+    # you could uncomment below:
+    # rm -f "$enc_archive"
 
+    # Finally, remove the unencrypted .zip file
     rm -f "$backup_name"
-    echo "[*] Cleanup complete. Only the encrypted archive remains."
+    echo "[*] Cleanup complete. Only the encrypted archive remains (in the current directory unless removed)."
 }
 
 
-########################################################################
-# FUNCTION: unencrypt_backups
-# - Prompts the user for the base name of the encrypted archive (without
-#   the extension ".zip.enc").
-# - Allows up to 3 password attempts for decryption.
-# - Once decrypted, prompts for a single folder name to place the entire
-#   extracted backup. If no name is given, defaults to "wazuh".
-# - Extraction is performed quietly into that one folder.
-########################################################################
 function unencrypt_backups {
     print_banner "Decrypt Backup"
 
-    # Prompt for the base name of the archive (without the extension)
-    while true; do
-        read -p "Enter the base name of the encrypted backup (do NOT include .zip.enc): " base_archive
-        if [ -z "$base_archive" ]; then
-            echo "[X] No base name provided. Please try again."
-            continue
-        fi
-
-        encrypted_file="${base_archive}.zip.enc"
-        if [ ! -f "$encrypted_file" ]; then
-            echo "[X] ERROR: File '$encrypted_file' does not exist in the current directory."
-            echo "[*] Make sure you are in the correct directory or re-enter the base name."
-        else
-            break
-        fi
-    done
-
-    # Up to 3 attempts to decrypt with a single password each time
-    local max_attempts=3
-    local attempt=1
-    local success_decrypt=false
-    local temp_output="decrypted_backup.zip"
-
-    while [ $attempt -le $max_attempts ]; do
-        pass1=$(get_silent_input_string "Enter decryption password for $encrypted_file (Attempt $attempt of $max_attempts): ")
-        echo
-        # Attempt decryption quietly (redirect stderr to /dev/null)
-        openssl enc -d -aes-256-cbc -in "$encrypted_file" -out "$temp_output" -k "$pass1" 2>/dev/null
-        if [ $? -ne 0 ]; then
-            echo "[X] ERROR: Decryption failed. Possibly a wrong password."
-            if [ $attempt -lt $max_attempts ]; then
-                echo "[*] Please try again."
-            else
-                echo "[X] Too many failed attempts. Aborting decryption."
-                rm -f "$temp_output"
-                return 1
-            fi
-            ((attempt++))
-        else
-            echo "[*] Decryption successful! Decrypted archive created as '$temp_output'."
-            success_decrypt=true
-            break
-        fi
-    done
-
-    if [ "$success_decrypt" != true ]; then
-        echo "[X] All decryption attempts failed."
-        rm -f "$temp_output"
-        return 1
+    # Step 1: Ask for the base name of the encrypted archive
+    # e.g., if the actual file is /etc/mybackup.zip.enc, the user just enters: /etc/mybackup
+    echo "Enter the base name of the encrypted backup (do NOT include '.zip.enc'):"
+    read -r enc_base_name
+    if [ -z "$enc_base_name" ]; then
+        echo "[X] No backup name provided. Aborting."
+        return
     fi
 
-    # Prompt for a single folder name. If none is provided, default to 'wazuh'.
-    read -p "Enter the folder name to place the entire extracted backup (default: wazuh): " folder_name
+    local enc_file="${enc_base_name}.zip.enc"
+    if [ ! -f "$enc_file" ]; then
+        echo "[X] ERROR: File '$enc_file' does not exist."
+        return
+    fi
+
+    # Step 2: Decrypt the file into a temporary .zip
+    local dec_zip="${enc_base_name}.zip"
+    local max_attempts=3
+    local attempt=1
+    local success=0
+
+    while [ $attempt -le $max_attempts ]; do
+        echo
+        read -r -s -p "Enter decryption password (Attempt $attempt of $max_attempts): " dec_password
+        echo
+        # Attempt the decryption
+        openssl enc -d -aes-256-cbc -in "$enc_file" -out "$dec_zip" -k "$dec_password" 2>/dev/null
+        if [ $? -ne 0 ]; then
+            echo "[X] ERROR: Decryption failed. Check your password."
+            attempt=$((attempt+1))
+        else
+            success=1
+            break
+        fi
+    done
+
+    if [ $success -eq 0 ]; then
+        echo "[X] Too many failed attempts. Aborting decryption."
+        rm -f "$dec_zip" 2>/dev/null
+        return
+    fi
+
+    echo "[*] Decrypted archive saved as '$dec_zip'."
+
+    # Step 3: Prompt for a folder name to hold the extracted files (default: "wazuh")
+    local folder_name
+    read -r -p "Enter the folder name to place the entire extracted backup (default: wazuh): " folder_name
     if [ -z "$folder_name" ]; then
         folder_name="wazuh"
     fi
 
-    # Create the folder and extract quietly.
-    mkdir -p "$folder_name"
-    unzip -q "$temp_output" -d "$folder_name"
-    echo "[*] Backup extracted to: '$folder_name'"
+    # Step 4: Unzip quietly to a temporary extraction folder
+    local temp_extraction_dir="$(mktemp -d)"
+    unzip -q "$dec_zip" -d "$temp_extraction_dir"
+    echo "[*] Decrypted archive extracted to temporary location: $temp_extraction_dir"
 
-    # Remove the temporary decrypted file.
-    rm -f "$temp_output"
+    # Step 5: Prompt for multiple directories to place the extracted data
+    echo
+    echo "[*] Provide directories where you'd like to store the fully extracted backup."
+    echo "[*] Enter one directory path per line. Press ENTER on a blank line to finish."
+    while true; do
+        local user_dir
+        user_dir=$(get_input_string "Directory to store extracted backup (blank to finish): ")
+        if [ -z "$user_dir" ]; then
+            echo "[*] Done placing the extracted backup."
+            break
+        fi
+
+        user_dir=$(readlink -f "$user_dir")
+        if [ ! -d "$user_dir" ]; then
+            echo "[*] Directory '$user_dir' does not exist. Creating it..."
+            sudo mkdir -p "$user_dir"
+            if [ $? -ne 0 ]; then
+                echo "[X] ERROR: Could not create directory '$user_dir'. Skipping..."
+                continue
+            fi
+        fi
+
+        # Make a subfolder named "$folder_name" in $user_dir
+        local final_path="$user_dir/$folder_name"
+        sudo mkdir -p "$final_path"
+        if [ $? -ne 0 ]; then
+            echo "[X] ERROR: Could not create subdirectory '$final_path'. Skipping..."
+            continue
+        fi
+
+        # Copy the entire extracted contents into that directory
+        sudo cp -R "$temp_extraction_dir/"* "$final_path/"
+        echo "[*] Extracted backup copied into '$final_path/'"
+    done
+
+    # Step 6: Clean up temporary .zip and extraction folder
+    rm -f "$dec_zip"
+    rm -rf "$temp_extraction_dir"
+
+    echo "[*] Decryption process completed."
 }
 
 
