@@ -2068,72 +2068,163 @@ function my_secure_sql_installation {
     fi
 }
 
-########################################################################
-# FUNCTION: manage_web_immutability
-# Scans for critical web directories and then, if approved by the user,
-# recursively sets (or removes) the immutable flag (-R +i or -R -i) on 
-# each directory found.
-########################################################################
-function manage_web_immutability {
-    print_banner "Manage Web Directory Immutability"
-    if [ "$ANSIBLE" == "true" ]; then
-         echo "[*] Ansible mode: Skipping immutable flag changes on web directories."
-         return 0
-    fi
+function manage_web_immutability_menu {
+    # A list of “candidate” directories that you believe should normally be immutable.
+    # Adjust this list to suit your environment. 
+    # Typically these are config directories or static content directories.
+    local default_web_dirs=(
+        "/etc/nginx" 
+        "/etc/apache2" 
+        "/usr/share/nginx" 
+        "/var/www" 
+        "/var/www/html" 
+        "/etc/lighttpd" 
+        "/etc/mysql" 
+        "/etc/postgresql" 
+        "/var/lib/apache2" 
+        "/var/lib/mysql" 
+        "/etc/redis" 
+        "/etc/phpMyAdmin" 
+        "/etc/php.d" 
+    )
 
-    # List of default critical web directories
-    default_web_dirs=( 
-    "/etc/nginx" 
-    "/etc/apache2" 
-    "/usr/share/nginx" 
-    "/var/www" 
-    "/var/www/html" 
-    "/etc/lighttpd" 
-    "/etc/mysql" 
-    "/etc/postgresql" 
-    "/var/lib/apache2" 
-    "/var/lib/mysql" 
-    "/etc/redis" 
-    "/etc/phpMyAdmin" 
-    "/etc/php.d" 
-)
+    # An array to store discovered directories from default_web_dirs.
+    local discovered_dirs=()
 
-    detected_web_dirs=()
-
-    echo "[*] Scanning for critical web directories..."
+    # 1) Populate discovered_dirs if they actually exist on the system.
     for dir in "${default_web_dirs[@]}"; do
         if [ -d "$dir" ]; then
-            detected_web_dirs+=("$dir")
+            discovered_dirs+=("$dir")
         fi
     done
 
-    if [ ${#detected_web_dirs[@]} -eq 0 ]; then
-        echo "[*] No critical web directories were found."
-        return
-    fi
+    # -------------------------
+    # Helper function to set +i
+    function set_immutable {
+        local path="$1"
+        sudo chattr -R +i "$path" 2>/dev/null && \
+            echo "[*] Immutable set recursively on: $path" || \
+            echo "[!] Failed to set immutable on: $path"
+    }
 
-    echo "[*] The following web directories have been detected:"
-    for d in "${detected_web_dirs[@]}"; do
-        echo "    $d"
-    done
+    # Helper function to set -i
+    function remove_immutable {
+        local path="$1"
+        sudo chattr -R -i "$path" 2>/dev/null && \
+            echo "[*] Immutable removed (recursively) from: $path" || \
+            echo "[!] Failed to remove immutable on: $path"
+    }
+    # -------------------------
 
-    read -p "Would you like to set these directories to immutable (recursively)? (y/N): " imm_choice
-    if [[ "$imm_choice" == "y" || "$imm_choice" == "Y" ]]; then
-        for d in "${detected_web_dirs[@]}"; do
-            sudo chattr -R +i "$d"
-            echo "[*] Set immutable flag recursively on $d"
+    # Sub-functions for each menu option
+
+    # Option 1: Detect & set discovered directories immutable
+    function detect_and_set_immutable {
+        # Show what we found
+        echo "[*] The following directories have been detected:"
+        for d in "${discovered_dirs[@]}"; do
+            echo "    $d"
         done
-    else
-        read -p "Would you like to remove the immutable flag from these directories (recursively)? (y/N): " unimm_choice
-        if [[ "$unimm_choice" == "y" || "$unimm_choice" == "Y" ]]; then
-            for d in "${detected_web_dirs[@]}"; do
-                sudo chattr -R -i "$d"
-                echo "[*] Removed immutable flag recursively from $d"
+
+        if [ ${#discovered_dirs[@]} -eq 0 ]; then
+            echo "[!] No default directories detected."
+            return
+        fi
+
+        read -p "Would you like to set ALL of these directories to immutable (recursively)? (y/N): " imm_choice
+        if [[ "$imm_choice" =~ ^[Yy]$ ]]; then
+            # Set each discovered directory to +i
+            for d in "${discovered_dirs[@]}"; do
+                set_immutable "$d"
             done
         else
-            echo "[*] No changes made to web directory immutability."
+            # If user says No, let them specify manually
+            echo "[*] Enter the directories you'd like to set as immutable (one per line)."
+            echo "    Press ENTER on a blank line to finish."
+            while true; do
+                local custom_dir
+                read -r -p "Directory (blank to finish): " custom_dir
+                if [ -z "$custom_dir" ]; then
+                    break
+                fi
+                if [ -d "$custom_dir" ]; then
+                    set_immutable "$custom_dir"
+                else
+                    echo "[X] Directory '$custom_dir' not found or invalid."
+                fi
+            done
         fi
-    fi
+    }
+
+    # Option 2: Reverse discovered immutability
+    function reverse_discovered_immutable {
+        if [ ${#discovered_dirs[@]} -eq 0 ]; then
+            echo "[!] No discovered directories found to un-set."
+            return
+        fi
+        echo "[*] Removing immutability for discovered directories..."
+        for d in "${discovered_dirs[@]}"; do
+            remove_immutable "$d"
+        done
+    }
+
+    # Option 3: Specify custom dirs to set +i
+    function custom_set_immutable {
+        echo "[*] Enter the directories you'd like to set as immutable (one per line)."
+        echo "    Press ENTER on a blank line to finish."
+        while true; do
+            local custom_dir
+            read -r -p "Directory to set immutable (blank to finish): " custom_dir
+            if [ -z "$custom_dir" ]; then
+                break
+            fi
+            if [ -d "$custom_dir" ]; then
+                set_immutable "$custom_dir"
+            else
+                echo "[X] '$custom_dir' not found or not a directory."
+            fi
+        done
+    }
+
+    # Option 4: Specify custom dirs to remove immutability
+    function custom_remove_immutable {
+        echo "[*] Enter the directories you'd like to remove immutability from (one per line)."
+        echo "    Press ENTER on a blank line to finish."
+        while true; do
+            local custom_dir
+            read -r -p "Directory to remove immutability (blank to finish): " custom_dir
+            if [ -z "$custom_dir" ]; then
+                break
+            fi
+            if [ -d "$custom_dir" ]; then
+                remove_immutable "$custom_dir"
+            else
+                echo "[X] '$custom_dir' not found or not a directory."
+            fi
+        done
+    }
+
+    # The actual sub-menu loop
+    while true; do
+        echo
+        echo "========== WEB DIRECTORY IMMUTABILITY MENU =========="
+        echo "1) Detect & Set Discovered Directories Immutable"
+        echo "2) Reverse Immutability for Discovered Directories"
+        echo "3) Specify Custom Directories to Set Immutable"
+        echo "4) Specify Custom Directories to Remove Immutability"
+        echo "5) Return to Web Hardening Menu"
+        read -p "Enter your choice [1-5]: " sub_choice
+        echo
+
+        case "$sub_choice" in
+            1) detect_and_set_immutable ;;
+            2) reverse_discovered_immutable ;;
+            3) custom_set_immutable ;;
+            4) custom_remove_immutable ;;
+            5) echo "[*] Returning to the previous menu..."; break ;;
+            *) echo "[X] Invalid option. Please choose 1-5." ;;
+        esac
+    done
 }
 
 ###########################
