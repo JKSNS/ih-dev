@@ -1787,56 +1787,93 @@ function install_modsecurity_docker {
 }
 
 
-# --------------------------------------------------------------------
+########################################################################
 # FUNCTION: install_modsecurity_manual
-# --------------------------------------------------------------------
-# This function installs ModSecurity for Apache in strict mode on
-# Debian-based systems. For RHEL/CentOS or Alpine, it prints a message
-# indicating that the procedure is not implemented. The firewall bits
-# (opening and closing iptables OUTPUT policy) have been removed because
-# your firewall configuration already permits outbound traffic on ports
-# 80, 443, and 53.
-# --------------------------------------------------------------------
+# ---------------------------------------------------------------------
+# This function installs the "libapache2-mod-security2" package for
+# Debian-based systems and then deploys a strict configuration for
+# ModSecurity. It attempts to locate the recommended configuration file
+# from common locations on Debian/Ubuntu systems. If the file cannot be
+# found, it notifies the user to manually specify the path.
+#
+# It then modifies the configuration to set SecRuleEngine to "On" and
+# finally restarts the Apache web server (checking for both “apache2”
+# and “httpd” as service names) to load the changes.
+#
+# Note: For RHEL/CentOS or Alpine systems, this function is currently
+# not implemented.
+########################################################################
 function install_modsecurity_manual {
-    
-    # Detect the package manager to decide which installation branch to use.
-    if command -v yum &>/dev/null; then
-        echo "RHEL-based manual ModSecurity installation is not implemented."
-        return 1
-    elif command -v apt-get &>/dev/null; then
+    # Detect the package manager and ensure we’re on a Debian-based system.
+    if command -v apt-get &>/dev/null; then
         echo "[*] Updating package list for Debian-based system..."
-        apt-get update
+        sudo apt-get update
         echo "[*] Installing libapache2-mod-security2..."
-        apt-get -y install libapache2-mod-security2
-        
-        echo "[*] Enabling ModSecurity in Apache..."
-        a2enmod security2
-        
-        echo "[*] Deploying strict configuration for ModSecurity..."
-        # Copy the recommended configuration file as a starting point.
-        cp /etc/modsecurity/modsecurity.conf-recommended /etc/modsecurity/modsecurity.conf
-        
-        # Modify the configuration to set the rule engine to "On".
-        sed -i 's/SecRuleEngine DetectionOnly/SecRuleEngine On/g' /etc/modsecurity/modsecurity.conf
-        
-        echo "[*] Restarting Apache to apply ModSecurity changes..."
-        # Depending on your system, the Apache service might be called "apache2" or "httpd".
-        if systemctl is-active apache2 &>/dev/null; then
-            systemctl restart apache2
-        elif systemctl is-active httpd &>/dev/null; then
-            systemctl restart httpd
-        else
-            echo "[WARN] Apache service not detected. Please restart your web server manually."
-        fi
-    elif command -v apk &>/dev/null; then
-        echo "Alpine-based manual ModSecurity installation is not implemented."
-        return 1
+        sudo apt-get -y install libapache2-mod-security2
     else
-        echo "Unsupported distribution for manual ModSecurity installation."
+        echo "[X] Manual ModSecurity installation is only implemented for Debian-based systems."
         return 1
     fi
 
-    echo "[*] Manual ModSecurity installation (strict mode) completed."
+    # Try to locate the recommended configuration file.
+    local recommended_conf=""
+    # Check common candidate locations:
+    if [ -f "/etc/modsecurity/modsecurity.conf-recommended" ]; then
+        recommended_conf="/etc/modsecurity/modsecurity.conf-recommended"
+    elif [ -f "/usr/share/doc/libapache2-mod-security2/examples/modsecurity.conf-recommended" ]; then
+        recommended_conf="/usr/share/doc/libapache2-mod-security2/examples/modsecurity.conf-recommended"
+    elif [ -f "/usr/share/modsecurity-crs/modsecurity.conf-recommended" ]; then
+        recommended_conf="/usr/share/modsecurity-crs/modsecurity.conf-recommended"
+    fi
+
+    if [ -z "$recommended_conf" ]; then
+        echo "[X] ERROR: Could not locate the recommended modsecurity configuration file."
+        echo "[X] Please manually locate 'modsecurity.conf-recommended' and copy it to /etc/modsecurity/"
+        return 1
+    else
+        echo "[*] Found recommended modsecurity config: $recommended_conf"
+    fi
+
+    # Ensure the destination directory exists.
+    if [ ! -d "/etc/modsecurity" ]; then
+        sudo mkdir -p /etc/modsecurity
+    fi
+
+    # Copy the recommended configuration to the correct location.
+    echo "[*] Deploying configuration to /etc/modsecurity/modsecurity.conf"
+    sudo cp "$recommended_conf" /etc/modsecurity/modsecurity.conf
+    if [ $? -ne 0 ]; then
+        echo "[X] ERROR: Failed to copy the configuration file."
+        return 1
+    fi
+
+    # Modify the configuration to set the rule engine to On (enforcing mode).
+    sudo sed -i 's/SecRuleEngine DetectionOnly/SecRuleEngine On/g' /etc/modsecurity/modsecurity.conf
+    if [ $? -ne 0 ]; then
+        echo "[X] ERROR: Failed to modify modsecurity configuration."
+        return 1
+    else
+        echo "[*] Modified modsecurity configuration to enable rules (SecRuleEngine On)."
+    fi
+
+    # Enable the ModSecurity module if not already enabled (Debian/Ubuntu)
+    if command -v a2enmod &>/dev/null; then
+        echo "[*] Enabling the security2 module via a2enmod..."
+        sudo a2enmod security2
+    fi
+
+    # Restart Apache service - check both apache2 and httpd
+    if systemctl is-active apache2 &>/dev/null; then
+        echo "[*] Restarting apache2 service..."
+        sudo systemctl restart apache2
+    elif systemctl is-active httpd &>/dev/null; then
+        echo "[*] Restarting httpd service..."
+        sudo systemctl restart httpd
+    else
+        echo "[WARN] Apache service not detected as active. Please restart your web server manually."
+    fi
+
+    echo "[*] Manual ModSecurity installation completed successfully."
 }
 
 
@@ -2083,6 +2120,108 @@ function manage_web_immutability {
         fi
     fi
 }
+
+###########################
+# FUNCTION: handle_non_immutable_dirs
+#
+# Creates a small sub-menu to either:
+#   1) Backup (rename) directories that cannot be made immutable -> .bak
+#   2) Restore (rename) them back to original
+#
+# You can call this function as a separate menu item, for example:
+#
+#   handle_non_immutable_dirs
+#
+###########################
+function handle_non_immutable_dirs {
+    # These are the paths that failed or are known to fail with chattr
+    # or for which "Operation not supported/permitted" was reported.
+    # Adjust as needed for your environment.
+    local non_immutable_paths=(
+        "/etc/apache2/conf-enabled"
+        "/etc/apache2/sites-enabled"
+        "/etc/apache2/mods-enabled"
+        "/etc/mysql"
+        "/var/www/html/prestashop/vendor/smarty/smarty/libs/sysplugins"
+        "/var/www/html/prestashop/vendor/symfony/symfony/src/Symfony/Component/Intl/Resources/data/currencies"
+        "/var/www/html/prestashop/vendor/tecnickcom/tcpdf/fonts"
+        "/var/www/html/prestashop/vendor/ezyang/htmlpurifier/library/HTMLPurifier/ConfigSchema/schema"
+        "/var/www/html/prestashop/modules/klaviyoopsautomation/vendor/giggsey/libphonenumber-for-php/src/data"
+        "/var/www/html/prestashop/modules/klaviyoopsautomation/vendor/giggsey/locale/data"
+        "/var/www/html/prestashop/modules/ps_shoppingcart/vendor/svix/go-internal/openapi"
+        "/var/www/html/prestashop/modules/ps_facebook/vendor/facebook/php-business-sdk/examples"
+        "/var/www/html/prestashop/modules/ps_facebook/vendor/facebook/php-business-sdk/src/FacebookAds/Object"
+        "/var/www/html/prestashop/modules/ps_checkout/vendor/giggsey/libphonenumber-for-php/src/data"
+        "/var/www/html/prestashop/modules/ps_checkout/vendor/giggsey/locale/data"
+        "/var/www/html/prestashop/modules/ps_gamification/views/img/badges"
+        "/var/www/html/prestashop/modules/ps_xmarketintegration/vendor/giggsey/libphonenumber-for-php/src/data"
+        "/var/www/html/prestashop/modules/ps_xmarketintegration/vendor/giggsey/locale/data"
+        "/var/www/html/prestashop/var/cache/prod/ContainerDuzmaSE"
+        "/var/www/html/prestashop/var/cache/prod/ContainerBSdrPE"
+        "/var/www/html/prestashop/translations/default"
+        "/var/www/html/prestashop/translations/en-US"
+        "/var/www/html/prestashop/themes/classic/assets/fonts"
+        "/var/www/html/prestashop/themes/new-theme/public"
+        "/var/www/html/prestashop/img/su"
+        "/var/www/html/prestashop/img/l"
+        "/var/www/html/prestashop/img/c"
+        "/var/www/html/prestashop/img/p"
+        "/var/www/html/prestashop/localization/CLDR/core/common/main"
+    )
+
+    print_banner "Manage Non-Immutable Directories"
+
+    # Simple sub-menu
+    while true; do
+        echo "These directories/files cannot be made immutable."
+        echo "1) Backup (rename) them with a .bak extension"
+        echo "2) Restore them from .bak to original"
+        echo "3) Return to previous menu"
+        read -rp "Enter your choice [1-3]: " sub_choice
+        echo
+
+        case "$sub_choice" in
+            1)
+                # Backup step: rename each path -> path.bak
+                echo "[*] Backing up directories/files (renaming -> .bak)..."
+                for path in "${non_immutable_paths[@]}"; do
+                    if [ -e "$path" ] && [ ! -e "${path}.bak" ]; then
+                        sudo mv "$path" "${path}.bak"
+                        echo "  Renamed: $path -> ${path}.bak"
+                    else
+                        # Either $path doesn't exist or $path.bak already exists
+                        echo "  Skipped: $path"
+                    fi
+                done
+                echo "[*] Backup (rename) complete."
+                ;;
+            2)
+                # Restore step: rename each .bak -> original
+                echo "[*] Restoring directories/files from .bak -> original..."
+                for path in "${non_immutable_paths[@]}"; do
+                    if [ -e "${path}.bak" ] && [ ! -e "$path" ]; then
+                        sudo mv "${path}.bak" "$path"
+                        echo "  Restored: ${path}.bak -> $path"
+                    else
+                        # Either ${path}.bak doesn't exist or original already exists
+                        echo "  Skipped: $path"
+                    fi
+                done
+                echo "[*] Restore complete."
+                ;;
+            3)
+                echo "[*] Returning to previous menu."
+                break
+                ;;
+            *)
+                echo "[X] Invalid option."
+                ;;
+        esac
+
+        echo
+    done
+}
+
 
 
 
