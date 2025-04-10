@@ -2213,9 +2213,26 @@ function harden_web {
     print_banner "Web Hardening Initiated"
     backup_databases
     secure_php_ini
-    # Use the Dockerized ModSecurity installation by default
-    install_modsecurity_docker
+
+    # In Ansible mode, automatically run the manual ModSecurity installation
+    # if Apache (or httpd) is running. Otherwise, do not install ModSecurity by default.
+    if [ "$ANSIBLE" == "true" ]; then
+        if systemctl is-active apache2 &>/dev/null || systemctl is-active httpd &>/dev/null; then
+            echo "[*] Detected Apache/HTTPD service running. Installing ModSecurity manually..."
+            install_modsecurity_manual
+        else
+            echo "[*] No Apache/HTTPD service detected. Skipping ModSecurity installation in Ansible mode."
+        fi
+    else
+        # For interactive runs, inform the user that the manual ModSecurity
+        # installation is available as a separate menu item.
+        echo "[*] Interactive mode: Manual ModSecurity installation is available as a menu item (Web Hardening -> Install ModSecurity (Manual))."
+    fi
+
+    # Configure Apache .htaccess for basic web protection
     configure_apache_htaccess
+
+    # Call SQL and web directory hardening functions.
     if [ "$ANSIBLE" == "true" ]; then
          echo "[*] Ansible mode: Skipping mysql_secure_installation and web directory immutability."
     else
@@ -2223,6 +2240,7 @@ function harden_web {
          manage_web_immutability
     fi
 }
+
 
 
 ##################### ADVANCED HARDENING FUNCTIONS #####################
