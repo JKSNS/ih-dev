@@ -2082,7 +2082,7 @@ function manage_web_immutability {
     fi
 
     # List of default critical web directories
-    default_web_dirs=( "/etc/nginx" "/etc/apache2" "/usr/share/nginx" "/var/www" "/var/www/html" "/etc/lighttpd" "/etc/mysql" "/etc/postgresql" "/var/lib/apache2" "/var/lib/mysql" "/etc/redis" "/etc/phpMyAdmin" "/etc/php.d" )
+    default_web_dirs=( "/etc/nginx" "/etc/apache2" "/usr/share/nginx" "/var/www/html" "/etc/lighttpd" "/var/lib/apache2" "/etc/phpMyAdmin" "/etc/php.d" )
     detected_web_dirs=()
 
     echo "[*] Scanning for critical web directories..."
