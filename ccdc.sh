@@ -1206,6 +1206,7 @@ function firewall_configuration_menu {
 ########################################################################
 function backup_directories {
     print_banner "Backup Directories"
+
     default_dirs=( "/etc/nginx" "/etc/apache2" "/usr/share/nginx" "/var/www" "/var/www/html" "/etc/lighttpd" "/etc/mysql" "/etc/postgresql" "/var/lib/apache2" "/var/lib/mysql" "/etc/redis" "/etc/phpMyAdmin" "/etc/php.d" )
     detected_dirs=()
     echo "[*] Scanning for critical directories..."
@@ -1214,61 +1215,72 @@ function backup_directories {
             detected_dirs+=("$d")
         fi
     done
+
     backup_list=()
+
     if [ ${#detected_dirs[@]} -gt 0 ]; then
         echo "[*] The following critical directories were detected:"
         for d in "${detected_dirs[@]}"; do
             echo "   $d"
         done
-        if [ "$ANSIBLE" == "true" ]; then
+
+        read -p "Would you like to back these up? (y/N): " detected_choice
+        if [[ "$detected_choice" =~ ^[Yy]$ ]]; then
             backup_list=("${detected_dirs[@]}")
-            echo "[*] Ansible mode: Automatically backing up detected directories."
-        else
-            read -p "Would you like to back these up? (y/N): " detected_choice
-            if [[ "$detected_choice" == "y" || "$detected_choice" == "Y" ]]; then
-                backup_list=("${detected_dirs[@]}")
-            fi
         fi
     else
         echo "[*] No critical directories detected."
     fi
-    if [ "$ANSIBLE" != "true" ]; then
-        read -p "Would you like to backup any additional files or directories? (y/N): " additional_choice
-        if [[ "$additional_choice" == "y" || "$additional_choice" == "Y" ]]; then
-            echo "[*] Enter additional directories/files to backup (one per line; hit ENTER on a blank line to finish):"
-            additional_dirs=$(get_input_list)
-            for item in $additional_dirs; do
-                path=$(readlink -f "$item")
-                if [ -e "$path" ]; then
-                    backup_list+=("$path")
-                else
-                    echo "[X] ERROR: $path does not exist."
-                fi
-            done
-        fi
+
+    read -p "Would you like to backup any additional files or directories? (y/N): " additional_choice
+    if [[ "$additional_choice" =~ ^[Yy]$ ]]; then
+        echo "[*] Enter additional directories/files to backup (one per line; press ENTER on a blank line to finish):"
+        while true; do
+            additional_dir=$(get_input_string "Add directory or file path: ")
+            if [ -z "$additional_dir" ]; then
+                # empty line => done
+                break
+            fi
+            path=$(readlink -f "$additional_dir")
+            if [ -e "$path" ]; then
+                backup_list+=("$path")
+                echo "[*] Added $path"
+            else
+                echo "[X] ERROR: $path does not exist."
+            fi
+        done
     fi
+
     if [ ${#backup_list[@]} -eq 0 ]; then
         echo "[*] No directories or files selected for backup. Exiting backup."
         return
     fi
+
+    # Prompt for archive name
+    local backup_name
     while true; do
         backup_name=$(get_input_string "Enter a name for the backup archive (without extension .zip): ")
-        if [ "$backup_name" != "" ]; then
-            if [[ "$backup_name" != *.zip ]]; then
-                backup_name="${backup_name}.zip"
-            fi
+        if [ -n "$backup_name" ]; then
+            # If the user didn't type '.zip' at the end, add it
+            [[ "$backup_name" != *.zip ]] && backup_name="${backup_name}.zip"
             break
+        else
+            echo "[X] ERROR: Backup name cannot be blank."
         fi
-        echo "[X] ERROR: Backup name cannot be blank."
     done
+
     echo "[*] Creating archive..."
-    zip -r "$backup_name" "${backup_list[@]}" >/dev/null 2>&1
-    if [ $? -ne 0 ]; then
+    # Create the zip archive. You can remove the redirection if you prefer to see progress:
+    if ! zip -r "$backup_name" "${backup_list[@]}" >/dev/null 2>&1; then
         echo "[X] ERROR: Failed to create archive."
         return
     fi
+
     echo "[*] Archive created: $backup_name"
+
+    # Encrypt the archive with more secure PBKDF2
     echo "[*] Encrypting the archive."
+    local enc_password enc_confirm
     while true; do
         enc_password=$(get_silent_input_string "Enter encryption password: ")
         echo
@@ -1280,37 +1292,58 @@ function backup_directories {
             break
         fi
     done
-    enc_archive="${backup_name}.enc"
-    openssl enc -aes-256-cbc -salt -in "$backup_name" -out "$enc_archive" -k "$enc_password"
-    if [ $? -ne 0 ]; then
+
+    local enc_archive="${backup_name}.enc"
+    # Use '-pbkdf2' for stronger key derivation
+    if ! openssl enc -aes-256-cbc -salt -pbkdf2 \
+           -in "$backup_name" -out "$enc_archive" -k "$enc_password"; then
         echo "[X] ERROR: Encryption failed."
+        rm -f "$backup_name"
         return
     fi
+
     echo "[*] Archive encrypted: $enc_archive"
+    # Remove the unencrypted zip
+    rm -f "$backup_name"
+
+    echo "[*] Enter directories to store the encrypted backup (one per line)."
+    echo "    Press ENTER on a blank line to finish."
+    local store_list=()
     while true; do
-        storage_dir=$(get_input_string "Enter directory to store the encrypted backup: ")
-        storage_dir=$(readlink -f "$storage_dir")
-        if [ -d "$storage_dir" ]; then
+        storage_dir=$(get_input_string "Store encrypted backup in: ")
+        if [ -z "$storage_dir" ]; then
+            # empty => finished
             break
-        else
-            echo "[*] Directory does not exist. Creating it..."
-            sudo mkdir -p "$storage_dir"
-            if [ $? -eq 0 ]; then
-                break
-            else
-                echo "[X] ERROR: Could not create directory."
+        fi
+        storage_dir=$(readlink -f "$storage_dir")
+        if [ ! -d "$storage_dir" ]; then
+            echo "[*] Directory '$storage_dir' does not exist. Creating it..."
+            if ! sudo mkdir -p "$storage_dir"; then
+                echo "[X] ERROR: Could not create directory: $storage_dir"
+                continue
             fi
         fi
+        store_list+=("$storage_dir")
     done
-    sudo mv "$enc_archive" "$storage_dir/"
-    if [ $? -eq 0 ]; then
-        echo "[*] Encrypted archive moved to $storage_dir"
+
+    if [ ${#store_list[@]} -eq 0 ]; then
+        echo "[!] You did not provide any destination directory. The encrypted archive will remain in the current directory."
     else
-        echo "[X] ERROR: Failed to move encrypted archive."
+        echo "[*] Copying encrypted archive to chosen directories..."
+        for dest in "${store_list[@]}"; do
+            if ! sudo cp "$enc_archive" "$dest/"; then
+                echo "[X] ERROR: Failed to move encrypted archive to $dest"
+            else
+                echo "[*] Encrypted archive copied to $dest"
+            fi
+        done
+        # Optionally remove the local copy if you only want it stored in the directories
+        # rm -f "$enc_archive"
     fi
-    rm -f "$backup_name"
-    echo "[*] Cleanup complete. Only the encrypted archive remains."
+
+    echo "[*] Backup process completed."
 }
+
 
 ########################################################################
 # FUNCTION: unencrypt_backups
@@ -1860,14 +1893,28 @@ function search_ssn {
     print_banner "Searching for SSN Patterns"
     local rootdir="/home/"
     local ssn_pattern='[0-9]\{3\}-[0-9]\{2\}-[0-9]\{4\}'
-    sudo find "$rootdir" -type f \( -name "*.txt" -o -name "*.csv" \) -exec sh -c '
-        file="$1"
-        pattern="$2"
-        grep -Hn "$pattern" "$file" | while read -r line; do
-            echo "$file:SSN:$line"
-        done
-    ' sh '{}' "$ssn_pattern" \;
+    
+    echo "[*] Scanning $rootdir for files containing SSN patterns..."
+    local found_match=0
+
+    # Iterate over files ending in .txt or .csv under the rootdir
+    while IFS= read -r file; do
+        if grep -E -q "$ssn_pattern" "$file"; then
+            echo "[WARNING] SSN pattern found in file: $file"
+            grep -E -Hn "$ssn_pattern" "$file"
+            found_match=1
+            # Pause to let the user review the match before continuing.
+            read -p "Press ENTER to continue scanning..."
+        fi
+    done < <(find "$rootdir" -type f \( -iname "*.txt" -o -iname "*.csv" \) 2>/dev/null)
+    
+    if [ $found_match -eq 0 ]; then
+        echo "[*] No SSN patterns found in $rootdir."
+    else
+        echo "[*] Finished scanning. Please review the above matches."
+    fi
 }
+
 
 function remove_unused_packages {
     print_banner "Removing Unused Packages"
