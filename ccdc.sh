@@ -2559,36 +2559,33 @@ function run_rkhunter {
 
 function harden_web {
     print_banner "Web Hardening Initiated"
+    
+    # 1. Install ModSecurity manually by default.
+    install_modsecurity_manual
+
+    # 2. Backup databases
     backup_databases
+
+    # 3. Secure php.ini files (using your original directive appending)
     secure_php_ini
 
-    # Ask if the user wants to manually install the WAF (ModSecurity)
-    if [ "$ANSIBLE" != "true" ]; then
-        read -p "Would you like to manually install the WAF (ModSecurity manual installation)? (y/N): " waf_choice
-        if [[ "$waf_choice" =~ ^[Yy]$ ]]; then
-            install_modsecurity_manual
-        else
-            echo "[*] Skipping manual WAF installation."
-        fi
-    else
-        # In Ansible mode, install only if Apache/httpd is running.
-        if systemctl is-active apache2 &>/dev/null || systemctl is-active httpd &>/dev/null; then
-            echo "[*] Detected Apache/HTTPD service running. Installing ModSecurity manually..."
-            install_modsecurity_manual
-        else
-            echo "[*] No Apache/HTTPD service detected; skipping ModSecurity installation in Ansible mode."
-        fi
-    fi
-
-    # Continue with the rest of the web hardening process
+    # 4. Configure Apache .htaccess for basic web protection.
     configure_apache_htaccess
 
+    # 5. Run MySQL secure installation and manage web directory immutability
+    #    only in interactive mode (non-Ansible) so that if the user chooses not
+    #    to run mysql_secure_installation, the process still continues.
     if [ "$ANSIBLE" != "true" ]; then
          my_secure_sql_installation
          manage_web_immutability
+    else
+         echo "[*] Ansible mode: Skipping mysql_secure_installation and web directory immutability."
     fi
+
     echo "[*] Web hardening process completed."
 }
+
+
 
 
 
