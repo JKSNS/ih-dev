@@ -1520,16 +1520,10 @@ function secure_php_ini {
         echo "short_open_tag = off" >> "$ini"
         echo "session.cookie_httponly = 1" >> "$ini"
         echo "session.use_only_cookies = 1" >> "$ini"
-        
-        # Ask the user if their site is running over HTTPS.
-        read -p "Is your website using HTTPS? (y/N): " use_https
-        if [[ "$use_https" =~ ^[Yy]$ ]]; then
-            echo "session.cookie_secure = 1" >> "$ini"
-        else
-            echo "[*] Not adding session.cookie_secure since HTTPS is not in use."
-        fi
+        echo "session.cookie_secure = 1" >> "$ini"
     done
 }
+
 
 
 
