@@ -1344,10 +1344,12 @@ function backup_directories {
 
 ########################################################################
 # FUNCTION: unencrypt_backups
-# Prompts the user for the base name of the encrypted archive (without extension),
-# allows up to 3 attempts for decryption, and then prompts for one or more extraction
-# directories. If the user enters no extraction directories, the decrypted file
-# remains for manual extraction.
+# - Prompts the user for the base name of the encrypted archive (without
+#   the extension ".zip.enc").
+# - Allows up to 3 password attempts for decryption.
+# - Once decrypted, prompts for a single folder name to place the entire
+#   extracted backup. If no name is given, defaults to "wazuh".
+# - Extraction is performed quietly into that one folder.
 ########################################################################
 function unencrypt_backups {
     print_banner "Decrypt Backup"
@@ -1363,13 +1365,13 @@ function unencrypt_backups {
         encrypted_file="${base_archive}.zip.enc"
         if [ ! -f "$encrypted_file" ]; then
             echo "[X] ERROR: File '$encrypted_file' does not exist in the current directory."
-            echo "[*] Make sure you are in the correct path or re-enter the base name."
+            echo "[*] Make sure you are in the correct directory or re-enter the base name."
         else
             break
         fi
     done
 
-    # Allow up to 3 attempts for decryption with a single password entry per try.
+    # Up to 3 attempts to decrypt with a single password each time
     local max_attempts=3
     local attempt=1
     local success_decrypt=false
@@ -1378,7 +1380,7 @@ function unencrypt_backups {
     while [ $attempt -le $max_attempts ]; do
         pass1=$(get_silent_input_string "Enter decryption password for $encrypted_file (Attempt $attempt of $max_attempts): ")
         echo
-        # Attempt decryption quietly (suppress standard error)
+        # Attempt decryption quietly (redirect stderr to /dev/null)
         openssl enc -d -aes-256-cbc -in "$encrypted_file" -out "$temp_output" -k "$pass1" 2>/dev/null
         if [ $? -ne 0 ]; then
             echo "[X] ERROR: Decryption failed. Possibly a wrong password."
@@ -1391,7 +1393,7 @@ function unencrypt_backups {
             fi
             ((attempt++))
         else
-            echo "[*] Decryption successful. Decrypted archive created as $temp_output."
+            echo "[*] Decryption successful! Decrypted archive created as '$temp_output'."
             success_decrypt=true
             break
         fi
@@ -1403,36 +1405,20 @@ function unencrypt_backups {
         return 1
     fi
 
-    # Prompt user for one or more extraction directories.
-    echo "Enter the directories to extract the decrypted backup into."
-    echo "Type one directory per line. When you are finished, just press ENTER on a blank line."
-    extract_dirs=()
-    while true; do
-        read -p "Extraction directory: " exdir
-        if [ -z "$exdir" ]; then
-            break
-        else
-            extract_dirs+=("$exdir")
-        fi
-    done
-
-    # If the user provided at least one extraction directory, extract the backup there.
-    if [ ${#extract_dirs[@]} -gt 0 ]; then
-        for dir in "${extract_dirs[@]}"; do
-            # Ensure the extraction directory exists.
-            mkdir -p "$dir"
-            # Quietly extract the decrypted archive using unzip's quiet mode (-q)
-            unzip -q "$temp_output" -d "$dir"
-            echo "[*] Backup extracted to: $dir"
-        done
-        # Clean up temporary decrypted file.
-        rm -f "$temp_output"
-    else
-        echo "[*] No extraction directories provided. The decrypted archive remains as '$temp_output'."
+    # Prompt for a single folder name. If none is provided, default to 'wazuh'.
+    read -p "Enter the folder name to place the entire extracted backup (default: wazuh): " folder_name
+    if [ -z "$folder_name" ]; then
+        folder_name="wazuh"
     fi
+
+    # Create the folder and extract quietly.
+    mkdir -p "$folder_name"
+    unzip -q "$temp_output" -d "$folder_name"
+    echo "[*] Backup extracted to: '$folder_name'"
+
+    # Remove the temporary decrypted file.
+    rm -f "$temp_output"
 }
-
-
 
 
 
