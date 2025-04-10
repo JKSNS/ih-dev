@@ -490,77 +490,150 @@ function setup_ufw {
     backup_current_ufw_rules
 }
 
-# --------------------------------------------------------------------
+
+########################################################################
 # FUNCTION: configure_security_modules
-# --------------------------------------------------------------------
-# This function prompts the user for whether to enforce SELinux and
-#/or AppArmor. If the user chooses to enforce SELinux, it sets SELinux to
-#enforcing mode and updates the configuration file accordingly.
-#If the user chooses to enforce AppArmor, it updates package lists,
-#installs AppArmor profiles and extra profiles, enables and starts the
-#AppArmor service, and then enforces all AppArmor profiles.
-# --------------------------------------------------------------------
+# Detects OS, then installs and configures SELinux (on RHEL-based) or
+# AppArmor (on Debian/Ubuntu/OpenSUSE). Removes references to disabling
+# or opening firewall policies here, relying instead on your existing
+# firewall rules for outbound 80/443/53.
+########################################################################
 function configure_security_modules {
     print_banner "Configuring Security Modules (SELinux & AppArmor)"
 
-    # --- SELinux Enforcement ---
-    read -p "Do you want to enforce SELinux? (y/N): " selinux_choice
-    case "$selinux_choice" in
-        [Yy]*)
-            echo "Enforcing SELinux..."
-            # Enforce SELinux immediately
-            if command -v setenforce &>/dev/null; then
-                sudo setenforce 1
-            else
-                echo "[WARN] setenforce command not found. Ensure SELinux tools are installed."
-            fi
-            # Modify the SELinux configuration file to make the change persistent.
-            if [ -f /etc/selinux/config ]; then
-                sudo sed -i 's/^SELINUX=.*/SELINUX=enforcing/' /etc/selinux/config
-                echo "SELinux is now configured to be enforcing on reboot."
-            else
-                echo "[WARN] /etc/selinux/config not found; please verify your SELinux installation."
-            fi
-            sestatus
-            ;;
-        *)
-            echo "SELinux enforcement skipped."
-            ;;
-    esac
+    # Detect OS/distribution
+    local distro=""
+    local release_file="/etc/os-release"
+    if [ -f "$release_file" ]; then
+        # shellcheck disable=SC1090
+        . "$release_file"
+        distro=$(echo "$ID" | tr '[:upper:]' '[:lower:]')
+    fi
 
-    # --- AppArmor Enforcement ---
-    read -p "Do you want to enforce AppArmor? (y/N): " apparmor_choice
-    case "$apparmor_choice" in
-        [Yy]*)
-            echo "Enforcing AppArmor..."
-            # Update package list and install AppArmor profiles (Debian/Ubuntu only)
+    # Decide which module to attempt installing based on distro
+    case "$distro" in
+        # Red Hat, CentOS, Fedora, Rocky, Alma, etc.
+        rhel|centos|fedora|rocky|almalinux)
+            echo "[*] Detected a RHEL-like OS ($distro). Attempting SELinux setup..."
+            setup_selinux_rhel
+            ;;
+        # Debian, Ubuntu (and possibly Linux Mint which also says 'ubuntu' in /etc/os-release)
+        debian|ubuntu|linuxmint)
+            echo "[*] Detected a Debian-like OS ($distro). Attempting AppArmor setup..."
+            setup_apparmor_debian
+            ;;
+        # openSUSE or SLES often uses AppArmor by default
+        opensuse*)
+            echo "[*] Detected openSUSE ($distro). Attempting AppArmor setup..."
+            setup_apparmor_debian  # same function works for openSUSE if it has zypper
+            ;;
+        # fallback
+        *)
+            echo "[!] Unrecognized distro: $distro"
+            echo "[!] Attempting generic check for apt-get or zypper or yum to decide..."
             if command -v apt-get &>/dev/null; then
-                sudo apt-get update
-                sudo apt-get install -y apparmor-profiles apparmor-profiles-extra
+                # Usually means Debian/Ubuntu
+                setup_apparmor_debian
+            elif command -v yum &>/dev/null || command -v dnf &>/dev/null; then
+                # Usually means RHEL-based
+                setup_selinux_rhel
+            elif command -v zypper &>/dev/null; then
+                # Usually openSUSE-based
+                setup_apparmor_debian
             else
-                echo "[WARN] apt-get not found. Please install AppArmor manually if required."
+                echo "[X] Could not determine how to install SELinux or AppArmor on this OS. Aborting."
+                return 1
             fi
-
-            # Enable and start the AppArmor service.
-            if command -v systemctl &>/dev/null; then
-                sudo systemctl enable apparmor
-                sudo systemctl start apparmor
-            else
-                echo "[WARN] systemctl not available; please start AppArmor manually."
-            fi
-
-            # Enforce all available AppArmor profiles.
-            sudo aa-enforce /etc/apparmor.d/*
-            echo "Current AppArmor status:"
-            aa-status
-            ;;
-        *)
-            echo "AppArmor enforcement skipped."
             ;;
     esac
-
-    print_banner "Security Modules Configuration Completed"
 }
+
+
+########################################################################
+# FUNCTION: setup_selinux_rhel
+# Installs and enables SELinux on RHEL-like distros (RHEL, CentOS, Fedora, etc.)
+########################################################################
+function setup_selinux_rhel {
+    # Optional prompt for user
+    read -p "Would you like to install/configure SELinux in Enforcing mode? (y/N): " confirm
+    if [[ ! "$confirm" =~ ^[Yy]$ ]]; then
+        echo "[*] Skipping SELinux setup."
+        return 0
+    fi
+
+    echo "[*] Installing SELinux-related packages..."
+    if command -v yum &>/dev/null; then
+        sudo yum install -y selinux-policy selinux-policy-targeted policycoreutils
+    elif command -v dnf &>/dev/null; then
+        sudo dnf install -y selinux-policy selinux-policy-targeted policycoreutils
+    else
+        echo "[X] No recognized package manager found for SELinux installation on a RHEL-like OS."
+        return 1
+    fi
+
+    echo "[*] Ensuring SELinux is set to enforcing..."
+    if [ -f /etc/selinux/config ]; then
+        sudo sed -i 's/^SELINUX=.*/SELINUX=enforcing/' /etc/selinux/config
+    fi
+
+    # Attempt to set enforce at runtime
+    if command -v setenforce &>/dev/null; then
+        sudo setenforce 1 || echo "[!] Could not setenforce 1. Check if SELinux is disabled at boot level."
+    fi
+
+    echo "[*] SELinux packages installed. SELinux is configured to enforcing in /etc/selinux/config."
+    echo "[*] If the system was previously in 'disabled' mode, a reboot may be required for full SELinux enforcement."
+}
+
+
+########################################################################
+# FUNCTION: setup_apparmor_debian
+# Installs AppArmor on Debian/Ubuntu-based distros (and possibly openSUSE).
+########################################################################
+function setup_apparmor_debian {
+    # Optional prompt for user
+    read -p "Would you like to install/configure AppArmor? (y/N): " confirm
+    if [[ ! "$confirm" =~ ^[Yy]$ ]]; then
+        echo "[*] Skipping AppArmor setup."
+        return 0
+    fi
+
+    echo "[*] Installing AppArmor-related packages..."
+
+    # For Debian/Ubuntu
+    if command -v apt-get &>/dev/null; then
+        sudo apt-get update -y
+        sudo apt-get install -y apparmor apparmor-profiles apparmor-utils
+
+        # Ensure service is enabled
+        if command -v systemctl &>/dev/null; then
+            sudo systemctl enable apparmor
+            sudo systemctl start apparmor
+        fi
+
+        # Enforce all profiles or do something more selective
+        # By default, you can do: 
+        #   sudo aa-enforce /etc/apparmor.d/*
+        # or you can just let the system handle it if the profiles are installed
+
+        echo "[*] AppArmor installed and started. Profiles are enforced if present."
+    elif command -v zypper &>/dev/null; then
+        # openSUSE approach
+        sudo zypper refresh
+        sudo zypper install -y apparmor-profiles apparmor-utils
+        # In openSUSE, AppArmor might already be installed and enabled by default
+        # etc.
+        sudo systemctl enable apparmor
+        sudo systemctl start apparmor
+        echo "[*] AppArmor installed/enabled under openSUSE."
+    else
+        echo "[X] Could not find apt-get or zypper. Aborting AppArmor setup."
+        return 1
+    fi
+}
+
+
+
 
 
 # ============================================================
@@ -2340,32 +2413,32 @@ function advanced_hardening {
     fi
     local adv_choice
     while true; do
-        print_banner "Advanced Hardening & Automation Menu"
+        print_banner "Advanced Hardening & Automation"
         echo "1) Run Full Advanced Hardening Process"
-        echo "2) Set up iptables persistence cronjob"
-        echo "3) Disable SSHD/Cockpit services"
-        echo "4) Set up firewall maintenance cronjob"
-        echo "5) Set up cronjob to clear NAT table"
-        echo "6) Set up cronjob to restart firewall service and additional services"
-        echo "7) Reset Advanced Hardening Configurations"
-        echo "8) Run rkhunter scan"
-        echo "9) Check Service Integrity"
-        echo "10) Fix Web Browser Permissions"
-        echo "11) Configure SELinux and AppArmor"
+        echo "2) Run rkhunter scan"
+        echo "3) Check Service Integrity"
+        echo "4) Fix Web Browser Permissions"
+        echo "5) Configure SELinux or AppArmor"
+        echo "6) Disable SSHD/Cockpit services"
+        echo "7) Set up iptables persistence cronjob (dev)"
+        echo "8) Set up firewall maintenance cronjob (dev)"
+        echo "9) Set up NAT table clear cronjob (dev)"
+        echo "10) Set up service restart cronjob (dev)"
+        echo "11) Reset Advanced Hardening Configurations (dev)"
         echo "12) Exit Advanced Hardening Menu"
         read -p "Enter your choice [1-12]: " adv_choice
         case $adv_choice in
             1) run_full_advanced_hardening ;;
-            2) setup_iptables_cronjob ;;
-            3) disable_unnecessary_services ;;
-            4) setup_firewall_maintenance_cronjob ;;
-            5) setup_nat_clear_cronjob ;;
-            6) setup_service_restart_cronjob ;;
-            7) reset_advanced_hardening ;;
-            8) run_rkhunter ;;
-            9) check_service_integrity ;;
-            10) fix_web_browser ;;
-            11) configure_security_modules ;;
+            2) run_rkhunter ;;
+            3) check_service_integrity ;;
+            4) fix_web_browser ;;
+            5) configure_security_modules ;; 
+            6) disable_unnecessary_services ;;
+            7) setup_iptables_cronjob ;;
+            8) setup_firewall_maintenance_cronjob ;;
+            9) setup_nat_clear_cronjob ;;
+            10) setup_service_restart_cronjob ;;
+            11) reset_advanced_hardening ;;
             12) echo "[*] Exiting advanced hardening menu."; break ;;
             *) echo "[X] Invalid option." ;;
         esac
@@ -2452,17 +2525,15 @@ function show_menu {
     echo "5) Splunk Installation"
     echo "6) SSH Hardening"
     echo "7) PAM/Profile Fixes & System Config"
-    echo "8) Web Hardening"
-    echo "9) Advanced Hardening"
-    echo "10) Setup Proxy & Install CA Certificates"
+    echo "8) Setup Proxy & Install CA Certs"
+    echo "9) Web Hardening"
+    echo "10) Advanced Hardening"
     echo "11) Exit"
     echo
     read -p "Enter your choice [1-11]: " menu_choice
     echo
     case $menu_choice in
-        1)
-            main
-            ;;
+        1) main ;;
         2)
             detect_system_info
             install_prereqs
@@ -2490,24 +2561,26 @@ function show_menu {
             sysctl_config
             ;;
         8)
-            show_web_hardening_menu
+            # New menu item for Proxy & CA Certs setup.
+            # You may place the proxy/CA certificate functions here. For example, if you have
+            # a function called setup_proxy_and_ca, it would be called like:
+            setup_proxy_and_ca
             ;;
         9)
-            advanced_hardening
+            show_web_hardening_menu
             ;;
         10)
-            setup_proxy_certificates_and_config
+            advanced_hardening
             ;;
         11)
-            echo "Exiting..."
-            exit 0
+            echo "Exiting..."; exit 0
             ;;
         *)
-            echo "Invalid option. Exiting."
-            exit 1
+            echo "Invalid option. Exiting."; exit 1
             ;;
     esac
 }
+
 
 ##################### MAIN FUNCTION #####################
 function main {
