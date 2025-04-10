@@ -2575,45 +2575,55 @@ function fix_web_browser() {
 
 function configure_apache_htaccess {
     print_banner "Configuring Apache .htaccess"
-    # Ensure mod_rewrite is enabled (if available)
-    if command -v a2enmod &> /dev/null; then
-        sudo a2enmod rewrite
-        sudo systemctl restart apache2
-    fi
-    # Determine the web root; defaults to /var/www/html if available, else /var/www
-    if [ -d "/var/www/html" ]; then
-         webroot="/var/www/html"
+
+    # 1) Figure out where your actual web‑app lives
+    if [ -d "/var/www/html/web" ]; then
+        webroot="/var/www/html/web"
+    elif [ -d "/var/www/html" ]; then
+        webroot="/var/www/html"
     elif [ -d "/var/www" ]; then
-         webroot="/var/www"
+        webroot="/var/www"
     else
-         echo "[X] No Apache web root found."
-         return 1
+        echo "[X] No Apache web root found."
+        return 1
     fi
-    sudo bash -c "cat > ${webroot}/.htaccess" <<'EOF'
-# Disable directory indexing
+
+    htfile="${webroot}/.htaccess"
+    echo "[*] Ensuring $htfile exists…"
+    sudo touch "$htfile"
+    sudo chown root:www-data "$htfile"
+    sudo chmod 0644 "$htfile"
+
+    # 2) Only inject our security defaults if we haven't already
+    if sudo grep -q "### CCDC HARDENING START" "$htfile"; then
+        echo "[*] $htfile already contains hardening markers; skipping."
+        return 0
+    fi
+
+    # 3) Make sure mod_rewrite is enabled
+    if command -v a2enmod &>/dev/null; then
+        sudo a2enmod rewrite
+    fi
+
+    # 4) Prepend our defaults
+    sudo bash -c "cat <<'EOF' | cat - $htfile > /tmp/ht.$$ && mv /tmp/ht.$$ $htfile
+### CCDC HARDENING START
+# Disable directory listings
+# (only valid if AllowOverride includes 'Options')
 Options -Indexes
 
-# Enable URL rewriting
-RewriteEngine On
+# Simple bad‑bot blocking
 <IfModule mod_rewrite.c>
-    # Block malicious user agents and specific scanning tools
-    RewriteCond %{HTTP_USER_AGENT} ^w3af.sourceforge.net [NC,OR]
-    RewriteCond %{HTTP_USER_AGENT} dirbuster [NC,OR]
-    RewriteCond %{HTTP_USER_AGENT} nikto [NC,OR]
-    RewriteCond %{HTTP_USER_AGENT} SF [NC,OR]
-    RewriteCond %{HTTP_USER_AGENT} sqlmap [NC,OR]
-    RewriteCond %{HTTP_USER_AGENT} fimap [NC,OR]
-    RewriteCond %{HTTP_USER_AGENT} nessus [NC,OR]
-    RewriteCond %{HTTP_USER_AGENT} whatweb [NC,OR]
-    RewriteCond %{HTTP_USER_AGENT} Openvas [NC,OR]
-    RewriteCond %{HTTP_USER_AGENT} jbrofuzz [NC,OR]
-    RewriteCond %{HTTP_USER_AGENT} libwhisker [NC,OR]
-    RewriteCond %{HTTP_USER_AGENT} webshag [NC,OR]
-    RewriteCond %{HTTP:Acunetix-Product} ^WVS [NC]
-    RewriteRule ^.* http://127.0.0.1/ [R=301,L]
+  RewriteEngine On
+  RewriteCond %{HTTP_USER_AGENT} (dirbuster|nikto|sqlmap|nessus|openvas|jbrofuzz|w3af\.sourceforge\.net|libwhisker|webshag|fimap) [NC]
+  RewriteRule .* - [F,L]
 </IfModule>
-EOF
-    echo "[*] Apache .htaccess configured at ${webroot}/.htaccess"
+### CCDC HARDENING END
+
+EOF"
+
+    echo "[*] Wrote hardened .htaccess to $htfile"
+    echo "[*] You may need to set 'AllowOverride All' in your <Directory> block for $webroot in your Apache vhost."
 }
 
 function run_rkhunter {
@@ -2655,7 +2665,7 @@ function harden_web {
     #    to run mysql_secure_installation, the process still continues.
     if [ "$ANSIBLE" != "true" ]; then
          my_secure_sql_installation
-         manage_web_immutability
+         manage_web_immutability_menu
     else
          echo "[*] Ansible mode: Skipping mysql_secure_installation and web directory immutability."
     fi
