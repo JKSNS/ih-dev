@@ -1954,27 +1954,27 @@ function adv_harden_web() {
 function configure_modsecurity {
     print_banner "Configuring ModSecurity (Block Mode) with a Single CRS Setup File"
 
-    # 1) Ensure modsecurity directory exists
+    # 1) Ensure /etc/modsecurity directory exists
     if [ ! -d "/etc/modsecurity" ]; then
         sudo mkdir -p /etc/modsecurity
     fi
 
-    # 2) Copy modsecurity.conf-recommended -> modsecurity.conf, set SecRuleEngine On
+    # 2) Copy modsecurity.conf-recommended -> modsecurity.conf (set SecRuleEngine On)
     local recommended_conf="/etc/modsecurity/modsecurity.conf-recommended"
     local main_conf="/etc/modsecurity/modsecurity.conf"
     if [ -f "$recommended_conf" ]; then
         sudo cp "$recommended_conf" "$main_conf"
-        # Change from DetectionOnly to On (case-insensitive match, just in case)
         sudo sed -i 's/^SecRuleEngine\s\+DetectionOnly/SecRuleEngine On/i' "$main_conf"
     else
         echo "[X] ERROR: $recommended_conf not found! Cannot configure ModSecurity."
         return 1
     fi
 
+    # Fix ownership/permissions
     sudo chown root:root "$main_conf"
     sudo chmod 644 "$main_conf"
 
-    # 3) Ensure your main audit log is in place (in /var/log/apache2/)
+    # 3) Ensure the audit log file is in place
     if [ ! -d "/var/log/apache2" ]; then
         sudo mkdir -p /var/log/apache2
     fi
@@ -1999,93 +1999,121 @@ function configure_modsecurity {
             return 1
         fi
     else
-        echo "[*] OWASP CRS found; pulling latest changes..."
-        sudo git -C /usr/share/owasp-modsecurity-crs pull
+        echo "[*] OWASP CRS found; you may pull updates if needed."
     fi
 
-    # 5) If you prefer to keep crs-setup.conf in /etc/modsecurity/crs, create that directory
+    # 5) If you keep your crs-setup.conf in /etc/modsecurity/crs/, ensure it’s there:
     if [ ! -d "/etc/modsecurity/crs" ]; then
         sudo mkdir -p /etc/modsecurity/crs
     fi
-
-    # Copy crs-setup.conf.example -> /etc/modsecurity/crs/crs-setup.conf if not already
-    if [ ! -f "/etc/modsecurity/crs/crs-setup.conf" ] && [ -f "/usr/share/owasp-modsecurity-crs/crs-setup.conf.example" ]; then
-        echo "[*] Copying crs-setup.conf.example -> /etc/modsecurity/crs/crs-setup.conf"
+    if [ -f "/usr/share/owasp-modsecurity-crs/crs-setup.conf.example" ] && [ ! -f "/etc/modsecurity/crs/crs-setup.conf" ]; then
         sudo cp /usr/share/owasp-modsecurity-crs/crs-setup.conf.example /etc/modsecurity/crs/crs-setup.conf
     fi
 
-    # 6) Modify security2.conf to remove any old references and add new lines
+    # 6) Reconfigure Apache’s security2.conf
     local sec_conf="/etc/apache2/mods-enabled/security2.conf"
     local backup_sec_conf="/etc/apache2/mods-enabled/security2.conf.bak"
+
     if [ -f "$sec_conf" ]; then
+        # Backup first
         sudo cp "$sec_conf" "$backup_sec_conf"
 
-        echo "[*] Commenting out any old CRS references inside security2.conf..."
-        # Example: comment out lines with 'owasp-modsecurity-crs' or 'crs-setup.conf'
-        sudo sed -i '/owasp-modsecurity-crs/s/^/## /' "$sec_conf"
-        sudo sed -i '/crs-setup\.conf/s/^/## /' "$sec_conf"
+        # Comment out any line referencing /usr/share/modsecurity-crs
+        sudo sed -i 's|^\([ \t]*Include.*usr/share/modsecurity-crs.*\)|#\1|' "$sec_conf"
 
-        # Make sure we have our two new Include lines:
-        #   1) Include /etc/modsecurity/crs/crs-setup.conf
-        #   2) Include /usr/share/owasp-modsecurity-crs/rules/*.conf
-        if ! grep -q 'Include /etc/modsecurity/crs/crs-setup.conf' "$sec_conf"; then
-            echo 'Include /etc/modsecurity/crs/crs-setup.conf' | sudo tee -a "$sec_conf" >/dev/null
-        fi
-        if ! grep -q 'Include /usr/share/owasp-modsecurity-crs/rules/*.conf' "$sec_conf"; then
-            echo 'Include /usr/share/owasp-modsecurity-crs/rules/*.conf' | sudo tee -a "$sec_conf" >/dev/null
-        fi
+        # Optionally comment out "IncludeOptional" lines referencing modsecurity-crs:
+        sudo sed -i 's|^\([ \t]*IncludeOptional.*usr/share/modsecurity-crs.*\)|#\1|' "$sec_conf"
+
+        # Ensure our correct lines are appended:
+        # (1) "Include /etc/modsecurity/crs/crs-setup.conf"
+        grep -q "Include /etc/modsecurity/crs/crs-setup.conf" "$sec_conf" || \
+            echo "Include /etc/modsecurity/crs/crs-setup.conf" | sudo tee -a "$sec_conf" >/dev/null
+
+        # (2) "Include /usr/share/modsecurity-crs/rules/*.conf"
+        grep -q "Include /usr/share/modsecurity-crs/rules/*.conf" "$sec_conf" || \
+            echo "Include /usr/share/modsecurity-crs/rules/*.conf" | sudo tee -a "$sec_conf" >/dev/null
     else
-        echo "[X] ERROR: $sec_conf not found. ModSecurity might not be enabled via a2enmod security2."
+        echo "[X] ERROR: $sec_conf not found. ModSecurity might not be enabled with 'a2enmod security2'."
         return 1
     fi
 
-    # 7) Ensure the default vhost includes SecRuleEngine On
-    #    (This is sometimes recommended by docs to override if needed)
-    local default_vhost="/etc/apache2/sites-enabled/000-default.conf"
-    if [ -f "$default_vhost" ]; then
-        sudo cp "$default_vhost" "${default_vhost}.bak"
-        echo "[*] Ensuring 'SecRuleEngine On' is set in $default_vhost"
-        # Insert SecRuleEngine On right after <VirtualHost *:80> if not present
-        if ! grep -q "SecRuleEngine On" "$default_vhost"; then
-            sudo sed -i '/<VirtualHost[[:space:]]\+\*:80>/a \ \ SecRuleEngine On' "$default_vhost"
-        fi
-    else
-        echo "[!] Could not find $default_vhost; skipping the addition of SecRuleEngine On in the default vhost."
-    fi
-
-    # 8) Test the config before the final restart
+    # 7) Test config before restarting
     echo "[*] Testing Apache config..."
     if ! sudo apachectl -t; then
         echo "[X] ERROR: Apache config test failed. Reverting changes..."
-        # revert security2.conf
-        if [ -f "$backup_sec_conf" ]; then
-            sudo mv "$backup_sec_conf" "$sec_conf"
-        fi
-        # revert default vhost if we changed it
-        if [ -f "${default_vhost}.bak" ]; then
-            sudo mv "${default_vhost}.bak" "$default_vhost"
-        fi
+        [ -f "$backup_sec_conf" ] && sudo mv "$backup_sec_conf" "$sec_conf"
         return 1
     fi
 
-    # 9) If test passes, restart
+    # 8) If all good, restart
     echo "[*] Config OK. Restarting Apache..."
-    sudo systemctl restart apache2
-    if [ $? -ne 0 ]; then
-        echo "[X] ERROR: Apache failed to restart. Reverting changes..."
-        if [ -f "$backup_sec_conf" ]; then
-            sudo mv "$backup_sec_conf" "$sec_conf"
-        fi
-        if [ -f "${default_vhost}.bak" ]; then
-            sudo mv "${default_vhost}.bak" "$default_vhost"
-        fi
+    if ! sudo systemctl restart apache2; then
+        echo "[X] ERROR: Apache restart failed. Reverting security2.conf..."
+        [ -f "$backup_sec_conf" ] && sudo mv "$backup_sec_conf" "$sec_conf"
         return 1
     fi
 
-    echo "[*] ModSecurity configured in blocking mode; /etc/modsecurity/crs/crs-setup.conf is included."
+    echo "[*] ModSecurity configured in blocking mode; /etc/modsecurity/crs/crs-setup.conf is used."
     echo "[*] Any old /usr/share/... references have been commented out in security2.conf."
+
+
+    ########################################################################
+    # 9) Ensure "SecRuleEngine On" appears inside <VirtualHost *:80> in
+    #    /etc/apache2/sites-enabled/000-default.conf
+    ########################################################################
+    local default_vhost="/etc/apache2/sites-enabled/000-default.conf"
+
+    if [ -f "$default_vhost" ]; then
+        # Backup 000-default.conf before modifying
+        local default_vhost_bak="${default_vhost}.$(date +%Y%m%d%H%M%S).bak"
+        sudo cp "$default_vhost" "$default_vhost_bak"
+
+        # Check if there is an existing <VirtualHost *:80> block
+        if grep -q "<VirtualHost *:80>" "$default_vhost"; then
+            # Within that block, see if "SecRuleEngine On" is already present
+            if ! sed -n '/<VirtualHost *:80>/,/<\/VirtualHost>/p' "$default_vhost" | grep -q "SecRuleEngine On"; then
+                # Insert it after the <VirtualHost *:80> line
+                sudo sed -i '/<VirtualHost \*:80>/a \    SecRuleEngine On' "$default_vhost"
+                echo "[*] Inserted 'SecRuleEngine On' inside the <VirtualHost *:80> block in 000-default.conf"
+            else
+                echo "[*] 'SecRuleEngine On' is already present inside the <VirtualHost *:80> block."
+            fi
+        else
+            # If there's no <VirtualHost *:80> block, just append one
+            cat <<EOF | sudo tee -a "$default_vhost" >/dev/null
+
+<VirtualHost *:80>
+    SecRuleEngine On
+</VirtualHost>
+EOF
+            echo "[*] Appended a new <VirtualHost *:80> block with 'SecRuleEngine On' to 000-default.conf"
+        fi
+
+        # Test Apache config again
+        echo "[*] Testing Apache config after updating 000-default.conf..."
+        if ! sudo apachectl -t; then
+            echo "[X] ERROR: Apache config test failed. Reverting changes to 000-default.conf..."
+            sudo mv "$default_vhost_bak" "$default_vhost"
+            return 1
+        fi
+
+        # Restart Apache if config is fine
+        echo "[*] Restarting Apache with updated 000-default.conf..."
+        if ! sudo systemctl restart apache2; then
+            echo "[X] ERROR: Apache restart failed. Reverting 000-default.conf..."
+            sudo mv "$default_vhost_bak" "$default_vhost"
+            return 1
+        fi
+
+        echo "[*] Successfully updated 000-default.conf with 'SecRuleEngine On'!"
+    else
+        echo "[X] ERROR: $default_vhost not found. Cannot add 'SecRuleEngine On' to 000-default.conf"
+        return 1
+    fi
+
     return 0
 }
+
 
 
 
