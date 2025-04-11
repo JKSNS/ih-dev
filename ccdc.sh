@@ -2409,62 +2409,45 @@ function handle_non_immutable_dirs {
 }
 
 
-
-
-function kill_other_sessions() {
-    # Get the current session's TTY
+function kill_other_sessions {
+    # Get the current TTY device (e.g., /dev/pts/0)
     local current_tty=$(tty 2>/dev/null)
-    if [[ -z "$current_tty" ]]; then
-        echo "Error: Could not determine current TTY" >&2
+    
+    # Check if TTY is valid; exit if not
+    if [ -z "$current_tty" ]; then
+        echo "[X] Error: Could not determine current TTY" >&2
         return 1
     fi
-
-    # Get the current user
+    
+    # Get the current user (should be root since script requires root privileges)
     local current_user=$(whoami)
-    if [[ -z "$current_user" ]]; then
-        echo "Error: Could not determine current user" >&2
-        return 1
-    }
-
-    # Check if who command is available
-    if ! command -v who >/dev/null 2>&1; then
-        echo "Error: 'who' command not found" >&2
-        return 1
-    }
-
-    # Get all sessions for the current user, excluding the current TTY
-    # Using who command to list all login sessions
-    while IFS= read -r line; do
-        # Parse who output (format: user tty time host)
-        read -r user tty _ <<< "$line"
-        
-        # Skip if not current user or current TTY
-        [[ "$user" != "$current_user" ]] && continue
-        [[ "$tty" == "${current_tty#/dev/}" ]] && continue
-
-        # Find PIDs associated with this TTY
-        # Using ps to get processes for the specific TTY
-        while IFS= read -r pid; do
-            # Skip empty PIDs
-            [[ -z "$pid" ]] && continue
-            
-            # Verify the process exists
-            if kill -0 "$pid" 2>/dev/null; then
-                echo "Terminating session on /dev/$tty (PID: $pid)"
-                # Send TERM signal first
-                kill -TERM "$pid" 2>/dev/null
-                # Wait briefly and send KILL if still running
-                sleep 0.1
-                if kill -0 "$pid" 2>/dev/null; then
-                    kill -KILL "$pid" 2>/dev/null
-                fi
-            fi
-        done < <(ps -t "$tty" -o pid= 2>/dev/null)
-    done < <(who 2>/dev/null)
-
-    echo "All other sessions for $current_user have been terminated"
+    
+    # Normalize TTY name by removing '/dev/' prefix to match 'who' output (e.g., pts/0)
+    local current_tty_short=$(echo "$current_tty" | sed 's|^/dev/||')
+    
+    # Get list of other TTYs for the current user, excluding the current TTY
+    local other_ttys=$(who | awk -v user="$current_user" -v tty="$current_tty_short" '$1 == user && $2 != tty {print $2}')
+    
+    # If no other sessions exist, inform and exit
+    if [ -z "$other_ttys" ]; then
+        echo "[*] No other sessions found for user $current_user"
+        return 0
+    fi
+    
+    # Iterate through other TTYs and terminate their processes
+    for tty in $other_ttys; do
+        echo "[*] Killing session on /dev/$tty"
+        # Get PIDs of processes attached to this TTY
+        local pids=$(ps -t "$tty" -o pid= 2>/dev/null)
+        for pid in $pids; do
+            # Kill each process, suppressing errors if PID no longer exists
+            kill "$pid" 2>/dev/null
+        done
+    done
+    
     return 0
 }
+
 
 
 
