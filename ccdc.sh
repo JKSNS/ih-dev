@@ -2412,32 +2412,39 @@ function handle_non_immutable_dirs {
 
 
 function kill_other_sessions {
-    print_banner "Killing Other Login Sessions"
+    print_banner "Killing Other Interactive Sessions"
 
-    # 1) Your real login TTY (eg pts/0, tty1 …)
-    local my_tty
-    my_tty=$(who -m | awk '{print $2}')   # who -m == “who am i”
+    # Who launched the script?  (sudo keeps the original in $SUDO_USER)
+    local me_user="${SUDO_USER:-$USER}"
 
-    # If for some reason who -m failed, bail out
-    if [[ -z "$my_tty" ]]; then
-        echo "[!] Couldn’t determine current TTY – aborting."
-        return 1
-    fi
+    # What TTY am I on right now?
+    local me_tty
+    me_tty=$(tty) || me_tty="/dev/unknown"
+    me_tty="${me_tty#/dev/}"        # strip leading /dev/
 
-    echo "[*] Current login TTY  : $my_tty"
+    echo "[*] Running as user : $me_user"
+    echo "[*] Current TTY     : $me_tty"
 
-    # 2) Loop over every logged‑in user/tty pair
-    local killed_any=0
+    # Walk through every login listed by `who`
+    local killed=0
     while read -r user tty _; do
-        # skip blank tty (shouldn’t happen) and our own tty
-        [[ -z "$tty" || "$tty" == "$my_tty" ]] && continue
+        # blank tty?  skip
+        [[ -z "$tty" ]] && continue
+        # strip /dev/
+        tty="${tty#/dev/}"
 
-        echo "    -> Killing all processes on $tty (user $user)"
-        pkill -KILL -t "$tty"
-        killed_any=1
+        # Skip the terminal we’re sitting in
+        if [[ "$user" == "$me_user" && "$tty" == "$me_tty" ]]; then
+            continue
+        fi
+
+        echo "    -> Killing processes for $user on $tty"
+        # only that user on that tty
+        pkill -KILL -u "$user" -t "$tty"
+        killed=1
     done < <(who)
 
-    if (( killed_any == 0 )); then
+    if (( killed == 0 )); then
         echo "[*] No other interactive sessions found."
     else
         echo "[*] All other sessions terminated."
