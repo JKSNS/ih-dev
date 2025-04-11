@@ -1949,13 +1949,7 @@ function adv_harden_web() {
 
 
 ###############################################################################
-# Function: configure_modsecurity
-# Description:
-#   This function configures ModSecurity in blocking mode with the OWASP Core
-#   Rule Set (CRS). It copies the recommended configuration file, changes the
-#   SecRuleEngine setting from DetectionOnly to On, fixes file ownership and
-#   permissions, and ensures that Apache is set to reference ONLY the desired
-#   CRS files in /etc/modsecurity/crs/.
+# Function: configure_modsecurityd
 ###############################################################################
 function configure_modsecurity {
     print_banner "Configuring ModSecurity (Block Mode) with a Single CRS Setup File"
@@ -2038,8 +2032,8 @@ function configure_modsecurity {
             echo "Include /etc/modsecurity/crs/crs-setup.conf" | sudo tee -a "$sec_conf" >/dev/null
 
         # (2) "Include /etc/modsecurity/crs/rules/*.conf" (assuming you place rules here)
-        grep -q "Include /etc/modsecurity/crs/rules/*.conf" "$sec_conf" || \
-            echo "Include /etc/modsecurity/crs/rules/*.conf" | sudo tee -a "$sec_conf" >/dev/null
+        grep -q "Include /usr/share/modsecurity-crs/rules/*.conf" "$sec_conf" || \
+            echo "Include /usr/share/modsecurity-crs/rules/*.conf" | sudo tee -a "$sec_conf" >/dev/null
     else
         echo "[X] ERROR: $sec_conf not found. ModSecurity might not be enabled with 'a2enmod security2'."
         return 1
