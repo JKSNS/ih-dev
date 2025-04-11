@@ -1622,80 +1622,97 @@ Employees are required to notify their administrators immediately of any known o
 function secure_ssh {
     print_banner "Securing SSH"
 
-    # Determine SSH service name.
-    if sudo service sshd status > /dev/null 2>&1; then
-        service_name="sshd"
-    elif sudo service ssh status > /dev/null 2>&1; then
-        service_name="ssh"
+    # 1) Attempt to detect the SSH service name using systemd (if available).
+    #    On Ubuntu or Debian, the SSH service typically goes by "ssh".
+    #    On other distros (like CentOS or Fedora), it might be "sshd".
+    if command -v systemctl >/dev/null 2>&1; then
+        if systemctl is-active sshd >/dev/null 2>&1; then
+            service_name="sshd"
+        elif systemctl is-active ssh >/dev/null 2>&1; then
+            service_name="ssh"
+        else
+            # If neither is-active returned zero, try a fallback to see if they're installed but not running.
+            if systemctl status sshd >/dev/null 2>&1; then
+                service_name="sshd"
+            elif systemctl status ssh >/dev/null 2>&1; then
+                service_name="ssh"
+            else
+                echo "[X] No active or installed SSH/sshd service found via systemctl. Skipping SSH hardening."
+                return
+            fi
+        fi
     else
-        echo "[*] SSH service not found. Skipping SSH hardening."
-        return
+        # 2) Fallback approach if systemctl is not available (sysvinit or older systems).
+        if sudo service sshd status >/dev/null 2>&1; then
+            service_name="sshd"
+        elif sudo service ssh status >/dev/null 2>&1; then
+            service_name="ssh"
+        else
+            echo "[X] SSH service not found. Skipping SSH hardening."
+            return
+        fi
     fi
 
+    # 3) From here on, we assume we found a service_name of either "ssh" or "sshd".
+    #    Next, set the path to the SSH daemon config file. Typically /etc/ssh/sshd_config.
     config_file="/etc/ssh/sshd_config"
     if [ ! -f "$config_file" ]; then
-        echo "[X] ERROR: SSH configuration file not found: $config_file"
+        echo "[X] ERROR: SSH configuration file not found at: $config_file"
         return
     fi
 
-    # Backup current sshd_config
+    # 4) Backup current sshd_config before making changes.
     sudo cp "$config_file" "${config_file}.bak"
 
-    # 1. Disable Root Login
+    # 5) Disable Root Login
     sudo sed -i '/^PermitRootLogin/d' "$config_file"
     echo "PermitRootLogin no" | sudo tee -a "$config_file" >/dev/null
 
-    # 2. Allow only specific users or groups - uncomment and modify as needed.
+    # (Optional) Uncomment if you only want specific users or groups to SSH:
     # echo "AllowUsers ccdcuser1 ccdcuser2" | sudo tee -a "$config_file" >/dev/null
     # echo "AllowGroups admin" | sudo tee -a "$config_file" >/dev/null
 
-    # 3. Deny specific users or groups - uncomment and modify as needed.
+    # (Optional) Or if you need to deny certain users/groups:
     # echo "DenyUsers apache www-data" | sudo tee -a "$config_file" >/dev/null
     # echo "DenyGroups somegroup" | sudo tee -a "$config_file" >/dev/null
 
-    # 4. Change SSH port if desired.
-    # echo "Port 222" | sudo tee -a "$config_file" >/dev/null
-
-    # 5. Change Login Grace Time to 1 minute.
+    # 6) Adjust LoginGraceTime
     sudo sed -i '/^LoginGraceTime/d' "$config_file"
     echo "LoginGraceTime 1m" | sudo tee -a "$config_file" >/dev/null
 
-    # 6. Restrict the interface(s) via ListenAddress - uncomment and modify as needed.
-    # echo "ListenAddress 192.168.10.200" | sudo tee -a "$config_file" >/dev/null
-
-    # 7. Set SSH idle timeout (ClientAliveInterval and ClientAliveCountMax).
+    # 7) Client keep-alive / idle timeout
     sudo sed -i '/^ClientAliveInterval/d' "$config_file"
     sudo sed -i '/^ClientAliveCountMax/d' "$config_file"
     echo "ClientAliveInterval 600" | sudo tee -a "$config_file" >/dev/null
     echo "ClientAliveCountMax 0" | sudo tee -a "$config_file" >/dev/null
 
-    # Additional recommended settings:
-    # Deny empty passwords.
+    # 8) Disable empty passwords
     sudo sed -i '/^PermitEmptyPasswords/d' "$config_file"
     echo "PermitEmptyPasswords no" | sudo tee -a "$config_file" >/dev/null
 
-    # Set AddressFamily to inet (IPv4 only).
+    # 9) Force IPv4 only
     sudo sed -i '/^AddressFamily/d' "$config_file"
     echo "AddressFamily inet" | sudo tee -a "$config_file" >/dev/null
 
-    # Disable DNS lookups for connecting clients.
+    # 10) Disable DNS lookups to speed up logins
     sudo sed -i '/^UseDNS/d' "$config_file"
     echo "UseDNS no" | sudo tee -a "$config_file" >/dev/null
 
-    # Test SSH configuration.
-    if sudo sshd -t; then
-        # Restart the SSH service.
+    # 11) Test the SSH configuration.
+    if sudo sshd -t 2>/dev/null; then
+        # 12) Restart the SSH service to apply changes
         if command -v systemctl >/dev/null 2>&1; then
             sudo systemctl restart "$service_name"
         else
             sudo service "$service_name" restart
         fi
-        echo "[*] SSH hardening applied and $service_name restarted."
+        echo "[*] SSH hardening applied and $service_name restarted successfully."
     else
-        echo "[X] ERROR: SSH configuration test failed. Restoring original configuration."
+        echo "[X] ERROR: SSH configuration test failed. Restoring the original configuration..."
         sudo cp "${config_file}.bak" "$config_file"
     fi
 }
+
 
 
 
