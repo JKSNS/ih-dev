@@ -1864,7 +1864,7 @@ function install_modsecurity_docker {
 
 
 ###############################################################################
-# Web Hardening Functions (Aggregated)
+# Web Hardening Functions (Separate Options)
 ###############################################################################
 
 # Disable directory browsing for Apache or Nginx.
@@ -1937,14 +1937,62 @@ function restrict_file_access() {
     fi
 }
 
-# Aggregated function to apply all basic web security measures.
-function adv_harden_web() {
-    print_banner "Applying Advanced Web Security Measures"
-    disable_directory_browsing
-    set_security_headers
-    hide_server_version
-    restrict_file_access
-    echo "[*] Advanced Web Security Measures applied."
+###############################################################################
+# Web Hardening Menu
+###############################################################################
+function display_web_hardening_menu() {
+    echo "-------------------------------------------------"
+    echo "           Web Hardening Menu"
+    echo "-------------------------------------------------"
+    echo "1) Disable Directory Browsing"
+    echo "2) Set Security Headers"
+    echo "3) Hide Server Version Information"
+    echo "4) Restrict File Access"
+    echo "5) Apply ALL Web Hardening Measures"
+    echo "q) Quit"
+    echo "-------------------------------------------------"
+}
+
+function web_hardening_menu() {
+    local choice
+    while true; do
+        display_web_hardening_menu
+        read -p "Choose an option: " choice
+        case "$choice" in
+            1)
+                disable_directory_browsing
+                echo "[*] Directory browsing disabled (if applicable)."
+                ;;
+            2)
+                set_security_headers
+                echo "[*] Security headers set."
+                ;;
+            3)
+                hide_server_version
+                echo "[*] Server version info hidden."
+                ;;
+            4)
+                restrict_file_access
+                echo "[*] File access restrictions applied."
+                ;;
+            5)
+                # Apply all measures one after the other.
+                disable_directory_browsing
+                set_security_headers
+                hide_server_version
+                restrict_file_access
+                echo "[*] ALL web hardening measures applied."
+                ;;
+            q|Q)
+                echo "[*] Exiting Web Hardening Menu."
+                break
+                ;;
+            *)
+                echo "[X] Invalid option. Please choose a valid option."
+                ;;
+        esac
+        echo ""
+    done
 }
 
 
@@ -3189,7 +3237,7 @@ function show_web_hardening_menu {
     echo "8) Manage Web Directory Immutability"
     echo "9) Disable phpMyAdmin"
     echo "10) Configure ModSecurity (block mode with OWASP CRS)"
-    echo "11) Advanced Web Hardening"
+    echo "11) Advanced Web Hardening Menu"
     echo "12) Exit Web Hardening Menu"
     read -p "Enter your choice [1-12]: " web_menu_choice
     echo
@@ -3244,7 +3292,7 @@ function show_web_hardening_menu {
             ;;
         11)
             print_banner "Advanced Web Hardening Configurations"
-            adv_harden_web
+            web_hardening_menu
             ;;
         12)
             echo "[*] Exiting Web Hardening Menu"
