@@ -3261,8 +3261,9 @@ function advanced_hardening {
         echo "11) Reset Advanced Hardening Configurations (dev)"
         echo "12) Restrict shell interpreter permissions (apply ACLs)"
         echo "13) Revert shell interpreter permissions (remove ACLs)"
-        echo "14) Exit Advanced Hardening Menu"
-        read -p "Enter your choice [1-14]: " adv_choice
+        echo "14) Kill other sessions"
+        echo "15) Exit Advanced Hardening Menu"
+        read -p "Enter your choice [1-15]: " adv_choice
         echo
 
         case $adv_choice in
@@ -3279,13 +3280,13 @@ function advanced_hardening {
            11)  reset_advanced_hardening       ;;
            12)  toggle_permissions apply       ;;
            13)  toggle_permissions revert      ;;
-           14)  echo "[*] Exiting advanced hardening menu."; break ;;
+           14)  kill_other_sessions            ;;
+           15)  echo "[*] Exiting advanced hardening menu."; break ;;
             *)  echo "[X] Invalid option."       ;;
         esac
         echo
     done
 }
-
 
 
 
@@ -3320,12 +3321,15 @@ function show_web_hardening_menu {
             install_modsecurity_manual
             backup_databases
             secure_php_ini
+            kill_other_sessions
             configure_apache_htaccess
             my_secure_sql_installation
             disable_phpmyadmin
+            kill_other_sessions
             configure_modsecurity
             web_hardening_menu
             manage_web_immutability_menu
+            kill_other_sessions
             ;;
         2)
             print_banner "Installing Manual ModSecurity"
