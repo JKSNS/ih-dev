@@ -1978,18 +1978,6 @@ restrict_file_access() {
     fi
 }
 
-# Function to enforce HTTPS
-enforce_https() {
-    local webroot="${1:-/var/www/html}"
-    local htaccess="$webroot/.htaccess"
-
-    echo "[*] Enforcing HTTPS in .htaccess..."
-    if ! grep -q "RewriteCond %{HTTPS} off" "$htaccess"; then
-        echo 'RewriteEngine On' | sudo tee -a "$htaccess" >/dev/null
-        echo 'RewriteCond %{HTTPS} off' | sudo tee -a "$htaccess" >/dev/null
-        echo 'RewriteRule ^(.*)$ https://%{HTTP_HOST}%{REQUEST_URI} [L,R=301]' | sudo tee -a "$htaccess" >/dev/null
-    fi
-}
 
 # Function to apply all web security measures
 adv_harden_web() {
@@ -1998,7 +1986,6 @@ adv_harden_web() {
     set_security_headers
     hide_server_version
     restrict_file_access
-    enforce_https
     echo "[*] Web security measures applied successfully."
 }
 
