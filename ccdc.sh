@@ -2414,47 +2414,36 @@ function handle_non_immutable_dirs {
 function kill_other_sessions {
     print_banner "Killing Other Login Sessions"
 
-    # 1) Figure out who really invoked us
-    #    (when you run `sudo ./script`, USER becomes root, but SUDO_USER stays you)
-    local invoker="${SUDO_USER:-$USER}"
+    # 1) Your real login TTY (eg pts/0, tty1 …)
+    local my_tty
+    my_tty=$(who -m | awk '{print $2}')   # who -m == “who am i”
 
-    # 2) What TTY am I on right now?
-    #    We use /proc/self/fd/0 in case `tty` ever returns "not a tty"
-    local curr_tty
-    curr_tty=$(readlink /proc/$$/fd/0 2>/dev/null || tty)
-    curr_tty="${curr_tty#/dev/}"    # strip leading "/dev/"
-
-    echo "[*] Script invoked by: $invoker"
-    echo "[*] Current TTY:      $curr_tty"
-
-    # 3) Gather ALL of that user’s login TTYs from `who`
-    mapfile -t all_ttys < <(
-      who | awk -v u="$invoker" '$1==u { print $2 }' | sort -u
-    )
-
-    # 4) Filter out the one we’re on
-    other_ttys=()
-    for t in "${all_ttys[@]}"; do
-      if [[ "$t" != "$curr_tty" ]]; then
-        other_ttys+=("$t")
-      fi
-    done
-
-    # 5) If there’s nothing else, bail out
-    if [ ${#other_ttys[@]} -eq 0 ]; then
-      echo "[*] No other sessions to kill."
-      return 0
+    # If for some reason who -m failed, bail out
+    if [[ -z "$my_tty" ]]; then
+        echo "[!] Couldn’t determine current TTY – aborting."
+        return 1
     fi
 
-    echo "[*] Killing $invoker’s sessions on: ${other_ttys[*]}"
-    for t in "${other_ttys[@]}"; do
-      echo "    -> Killing processes on TTY $t"
-      # only kills processes belonging to $invoker on that TTY
-      pkill -KILL -u "$invoker" -t "$t"
-    done
+    echo "[*] Current login TTY  : $my_tty"
 
-    echo "[*] Done."
+    # 2) Loop over every logged‑in user/tty pair
+    local killed_any=0
+    while read -r user tty _; do
+        # skip blank tty (shouldn’t happen) and our own tty
+        [[ -z "$tty" || "$tty" == "$my_tty" ]] && continue
+
+        echo "    -> Killing all processes on $tty (user $user)"
+        pkill -KILL -t "$tty"
+        killed_any=1
+    done < <(who)
+
+    if (( killed_any == 0 )); then
+        echo "[*] No other interactive sessions found."
+    else
+        echo "[*] All other sessions terminated."
+    fi
 }
+
 
 
 
