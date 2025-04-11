@@ -1900,6 +1900,115 @@ function fix_modsecurity_audit_log {
     echo "[*] Audit log file fixed: $audit_log"
 }
 
+# Function to disable directory browsing
+disable_directory_browsing() {
+    local webroot="${1:-/var/www/html}"
+    local apache_conf="/etc/apache2/apache2.conf"
+    local nginx_conf="/etc/nginx/nginx.conf"
+
+    if [ -f "$apache_conf" ]; then
+        echo "[*] Disabling directory browsing for Apache..."
+        sudo sed -i '/<Directory \/var\/www\/>/,/<\/Directory>/ s/Options Indexes/Options -Indexes/' "$apache_conf"
+        sudo systemctl restart apache2 2>/dev/null || echo "[X] Failed to restart Apache."
+    elif [ -f "$nginx_conf" ]; then
+        echo "[*] Disabling directory browsing for Nginx..."
+        sudo sed -i '/location \// s/autoindex on;/autoindex off;/' "$nginx_conf"
+        sudo systemctl restart nginx 2>/dev/null || echo "[X] Failed to restart Nginx."
+    else
+        echo "[X] No supported web server configuration found."
+    fi
+}
+
+# Function to set security headers
+set_security_headers() {
+    local webroot="${1:-/var/www/html}"
+    local htaccess="$webroot/.htaccess"
+
+    echo "[*] Setting security headers in .htaccess..."
+    if [ ! -f "$htaccess" ]; then
+        sudo touch "$htaccess"
+        sudo chown root:www-data "$htaccess"
+        sudo chmod 0644 "$htaccess"
+    fi
+
+    # Add headers if not already present
+    if ! grep -q "X-Frame-Options" "$htaccess"; then
+        echo 'Header always set X-Frame-Options "DENY"' | sudo tee -a "$htaccess" >/dev/null
+    fi
+    if ! grep -q "X-Content-Type-Options" "$htaccess"; then
+        echo 'Header always set X-Content-Type-Options "nosniff"' | sudo tee -a "$htaccess" >/dev/null
+    fi
+    if ! grep -q "Content-Security-Policy" "$htaccess"; then
+        echo 'Header always set Content-Security-Policy "default-src '\''self'\''; script-src '\''self'\'' https://trusted.cdn.com; object-src '\''none'\'';"' | sudo tee -a "$htaccess" >/dev/null
+    fi
+    if ! grep -q "Strict-Transport-Security" "$htaccess"; then
+        echo 'Header always set Strict-Transport-Security "max-age=31536000; includeSubDomains"' | sudo tee -a "$htaccess" >/dev/null
+    fi
+    if ! grep -q "Referrer-Policy" "$htaccess"; then
+        echo 'Header always set Referrer-Policy "no-referrer"' | sudo tee -a "$htaccess" >/dev/null
+    fi
+}
+
+# Function to hide server version information
+hide_server_version() {
+    local apache_conf="/etc/apache2/apache2.conf"
+    local nginx_conf="/etc/nginx/nginx.conf"
+
+    if [ -f "$apache_conf" ]; then
+        echo "[*] Hiding server version for Apache..."
+        sudo sed -i '/ServerTokens/d' "$apache_conf"
+        sudo sed -i '/ServerSignature/d' "$apache_conf"
+        echo "ServerTokens Prod" | sudo tee -a "$apache_conf" >/dev/null
+        echo "ServerSignature Off" | sudo tee -a "$apache_conf" >/dev/null
+        sudo systemctl restart apache2 2>/dev/null || echo "[X] Failed to restart Apache."
+    elif [ -f "$nginx_conf" ]; then
+        echo "[*] Hiding server version for Nginx..."
+        sudo sed -i '/server_tokens/d' "$nginx_conf"
+        echo "server_tokens off;" | sudo tee -a "$nginx_conf" >/dev/null
+        sudo systemctl restart nginx 2>/dev/null || echo "[X] Failed to restart Nginx."
+    else
+        echo "[X] No supported web server configuration found."
+    fi
+}
+
+# Function to restrict file access (mitigate path traversal)
+restrict_file_access() {
+    local webroot="${1:-/var/www/html}"
+    local apache_conf="/etc/apache2/apache2.conf"
+
+    if [ -f "$apache_conf" ]; then
+        echo "[*] Restricting file access for Apache..."
+        sudo sed -i '/<Directory \/var\/www\/>/,/<\/Directory>/ s/AllowOverride None/AllowOverride All/' "$apache_conf"
+        sudo systemctl restart apache2 2>/dev/null || echo "[X] Failed to restart Apache."
+    else
+        echo "[*] Apache configuration not found. Ensure .htaccess is used for file restrictions."
+    fi
+}
+
+# Function to enforce HTTPS
+enforce_https() {
+    local webroot="${1:-/var/www/html}"
+    local htaccess="$webroot/.htaccess"
+
+    echo "[*] Enforcing HTTPS in .htaccess..."
+    if ! grep -q "RewriteCond %{HTTPS} off" "$htaccess"; then
+        echo 'RewriteEngine On' | sudo tee -a "$htaccess" >/dev/null
+        echo 'RewriteCond %{HTTPS} off' | sudo tee -a "$htaccess" >/dev/null
+        echo 'RewriteRule ^(.*)$ https://%{HTTP_HOST}%{REQUEST_URI} [L,R=301]' | sudo tee -a "$htaccess" >/dev/null
+    fi
+}
+
+# Function to apply all web security measures
+adv_harden_web() {
+    echo "[*] Applying Web Security Measures..."
+    disable_directory_browsing
+    set_security_headers
+    hide_server_version
+    restrict_file_access
+    enforce_https
+    echo "[*] Web security measures applied successfully."
+}
+
 ########################################################################
 # FUNCTION: install_modsecurity_manual
 # ---------------------------------------------------------------------
@@ -2976,7 +3085,8 @@ function show_web_hardening_menu {
     echo "7) Run MySQL Secure Installation"
     echo "8) Manage Web Directory Immutability"
     echo "9) Disable phpMyAdmin"
-    echo "10) Exit Web Hardening Menu"
+    echo "10) Advanced Web Hardening"
+    echo "11) Exit Web Hardening Menu"
     read -p "Enter your choice [1-10]: " web_menu_choice
     echo
 
@@ -3024,6 +3134,10 @@ function show_web_hardening_menu {
             disable_phpmyadmin
             ;;
         10)
+            echo "[*] Advanced Web Hardening Configs"
+            adv_harden_web
+            ;;
+        11)
             echo "[*] Exiting Web Hardening Menu"
             ;;
         *)
@@ -3090,7 +3204,7 @@ function show_menu {
             setup_proxy_and_ca
             ;;
         9)
-            show_web_hardening_menu
+            _hardening_menu
             ;;
         10)
             advanced_hardening
