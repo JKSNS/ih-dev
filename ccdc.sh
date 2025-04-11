@@ -1893,7 +1893,106 @@ function fix_modsecurity_audit_log {
     echo "[*] Audit log file fixed: $audit_log"
 }
 
-# Function to disable directory browsing
+###############################################################################
+# Function: configure_modsecurity
+# Description:
+#   This function configures ModSecurity in blocking mode with the OWASP Core
+#   Rule Set (CRS). It copies the recommended configuration file, changes the
+#   SecRuleEngine setting from DetectionOnly to On, fixes file ownership and
+#   permissions, and ensures that Apache is set to include the CRS.
+###############################################################################
+function configure_modsecurity {
+    print_banner "Configuring ModSecurity to Block Suspicious Activity"
+    
+    # 1. Ensure the /etc/modsecurity directory exists.
+    if [ ! -d "/etc/modsecurity" ]; then
+        sudo mkdir -p /etc/modsecurity
+    fi
+
+    # 2. Copy the default configuration file if it exists.
+    if [ -f "/etc/modsecurity/modsecurity.conf-recommended" ]; then
+        sudo cp /etc/modsecurity/modsecurity.conf-recommended /etc/modsecurity/modsecurity.conf
+    else
+        echo "[X] ERROR: /etc/modsecurity/modsecurity.conf-recommended not found!"
+        return 1
+    fi
+
+    # 3. Change ModSecurity to blocking mode.
+    sudo sed -i 's/^SecRuleEngine\s\+DetectionOnly/SecRuleEngine On/' /etc/modsecurity/modsecurity.conf
+
+    # 4. Set correct ownership and permissions.
+    sudo chown root:root /etc/modsecurity/modsecurity.conf
+    sudo chmod 644 /etc/modsecurity/modsecurity.conf
+
+    # 5. Ensure the ModSecurity audit log exists and has the proper permissions.
+    if [ ! -d "/var/log/apache2" ]; then
+        sudo mkdir -p /var/log/apache2
+    fi
+    if [ ! -f "/var/log/apache2/modsec_audit.log" ]; then
+        sudo touch /var/log/apache2/modsec_audit.log
+    fi
+    sudo chown www-data:www-data /var/log/apache2/modsec_audit.log
+    sudo chmod 640 /var/log/apache2/modsec_audit.log
+
+    # 6. Set up the OWASP Core Rule Set (CRS).
+    if [ ! -d "/usr/share/owasp-modsecurity-crs" ]; then
+        echo "[*] OWASP CRS not found in /usr/share/owasp-modsecurity-crs; attempting to clone it..."
+        if command -v git &>/dev/null; then
+            sudo git clone https://github.com/coreruleset/coreruleset.git /usr/share/owasp-modsecurity-crs
+            if [ $? -ne 0 ]; then
+                echo "[X] ERROR: Failed to clone OWASP CRS."
+                return 1
+            fi
+        else
+            echo "[X] ERROR: git is not installed. Install git and try again."
+            return 1
+        fi
+    fi
+
+    # Copy the CRS setup file into /etc/modsecurity if not already present.
+    if [ -f "/usr/share/owasp-modsecurity-crs/crs-setup.conf.example" ]; then
+        sudo cp /usr/share/owasp-modsecurity-crs/crs-setup.conf.example /etc/modsecurity/crs-setup.conf
+    else
+        echo "[X] ERROR: CRS setup file not found!"
+        return 1
+    fi
+
+    # 7. Ensure Apache loads the CRS rules by updating the security2.conf file.
+    local sec_conf="/etc/apache2/mods-enabled/security2.conf"
+    if [ -f "$sec_conf" ]; then
+        if ! grep -q "Include /etc/modsecurity/crs-setup.conf" "$sec_conf"; then
+            echo "Include /etc/modsecurity/crs-setup.conf" | sudo tee -a "$sec_conf" >/dev/null
+        fi
+        if ! grep -q "Include /usr/share/owasp-modsecurity-crs/rules" "$sec_conf"; then
+            echo "Include /usr/share/owasp-modsecurity-crs/rules/*.conf" | sudo tee -a "$sec_conf" >/dev/null
+        fi
+    else
+        echo "[X] ERROR: Apache ModSecurity config ($sec_conf) not found!"
+        return 1
+    fi
+
+    # 8. Restart Apache and check for errors.
+    if systemctl is-active apache2 &>/dev/null; then
+        sudo systemctl restart apache2
+        if [ $? -ne 0 ]; then
+            echo "[X] ERROR: Apache failed to restart. Please check your configuration."
+            return 1
+        else
+            echo "[*] Apache restarted successfully. ModSecurity configured in blocking mode."
+        fi
+    else
+        echo "[X] ERROR: Apache service not active."
+        return 1
+    fi
+
+    return 0
+}
+
+###############################################################################
+# Web Security Functions (grouped together)
+###############################################################################
+
+# Disable directory browsing by modifying the web server’s configuration.
 disable_directory_browsing() {
     local webroot="${1:-/var/www/html}"
     local apache_conf="/etc/apache2/apache2.conf"
@@ -1912,7 +2011,7 @@ disable_directory_browsing() {
     fi
 }
 
-# Function to set security headers
+# Set security headers via .htaccess.
 set_security_headers() {
     local webroot="${1:-/var/www/html}"
     local htaccess="$webroot/.htaccess"
@@ -1924,7 +2023,7 @@ set_security_headers() {
         sudo chmod 0644 "$htaccess"
     fi
 
-    # Add headers if not already present
+    # Append headers if not already present.
     if ! grep -q "X-Frame-Options" "$htaccess"; then
         echo 'Header always set X-Frame-Options "DENY"' | sudo tee -a "$htaccess" >/dev/null
     fi
@@ -1942,7 +2041,7 @@ set_security_headers() {
     fi
 }
 
-# Function to hide server version information
+# Hide web server version information.
 hide_server_version() {
     local apache_conf="/etc/apache2/apache2.conf"
     local nginx_conf="/etc/nginx/nginx.conf"
@@ -1964,7 +2063,7 @@ hide_server_version() {
     fi
 }
 
-# Function to restrict file access (mitigate path traversal)
+# Restrict file access (to mitigate path traversal).
 restrict_file_access() {
     local webroot="${1:-/var/www/html}"
     local apache_conf="/etc/apache2/apache2.conf"
@@ -1978,16 +2077,16 @@ restrict_file_access() {
     fi
 }
 
-#TESTING NOT IN PROD
-# Function to apply all web security measures
+# Function to apply a set of additional web security measures.
 adv_harden_web() {
-    echo "[*] Applying Web Security Measures..."
+    echo "[*] Applying additional web security measures..."
     disable_directory_browsing
     set_security_headers
     hide_server_version
     restrict_file_access
-    echo "[*] Web security measures applied successfully."
+    echo "[*] Additional web security measures applied."
 }
+
 
 ########################################################################
 # FUNCTION: install_modsecurity_manual
@@ -2937,83 +3036,6 @@ EOF
     echo "[*] NAT table clear cron job created."
 }
 
-# Function: configure_modsecurity
-# This function configures ModSecurity to block (instead of detect) suspicious activity,
-# and installs and configures the OWASP Core Rule Set (CRS) for enhanced protection.
-function configure_modsecurity {
-    print_banner "Configuring ModSecurity in Blocking Mode"
-
-    # Step 1: Deploy the default configuration
-    if [ ! -f /etc/modsecurity/modsecurity.conf ]; then
-        echo "[*] Copying recommended ModSecurity configuration..."
-        sudo cp /etc/modsecurity/modsecurity.conf-recommended /etc/modsecurity/modsecurity.conf
-    else
-        echo "[*] /etc/modsecurity/modsecurity.conf already exists. Backing it up..."
-        sudo cp /etc/modsecurity/modsecurity.conf /etc/modsecurity/modsecurity.conf.bak
-    fi
-
-    # Step 2: Set blocking mode and default actions
-    sudo sed -i 's/SecRuleEngine DetectionOnly/SecRuleEngine On/' /etc/modsecurity/modsecurity.conf || { echo "[X] Failed to set SecRuleEngine to On."; return 1; }
-    echo "[*] SecRuleEngine set to On."
-
-    if ! grep -q 'SecDefaultAction "phase:1,deny,log"' /etc/modsecurity/modsecurity.conf; then
-        echo 'SecDefaultAction "phase:1,deny,log"' | sudo tee -a /etc/modsecurity/modsecurity.conf >/dev/null
-    fi
-    if ! grep -q 'SecDefaultAction "phase:2,deny,log"' /etc/modsecurity/modsecurity.conf; then
-        echo 'SecDefaultAction "phase:2,deny,log"' | sudo tee -a /etc/modsecurity/modsecurity.conf >/dev/null
-    fi
-    echo "[*] Default action directives appended."
-
-    # Step 3: Restart Apache to apply configuration changes
-    if systemctl is-active apache2 &>/dev/null; then
-        sudo systemctl restart apache2 || { echo "[X] Failed to restart apache2."; return 1; }
-    elif systemctl is-active httpd &>/dev/null; then
-        sudo systemctl restart httpd || { echo "[X] Failed to restart httpd."; return 1; }
-    else
-        echo "[X] No Apache service found to restart."
-    fi
-    echo "[*] Apache restarted."
-
-    # Step 4: Install the OWASP ModSecurity Core Rule Set (CRS)
-    echo "[*] Installing OWASP ModSecurity CRS..."
-    if [ -d /usr/share/modsecurity-crs ]; then
-        sudo rm -rf /usr/share/modsecurity-crs
-    fi
-    if ! command -v git &>/dev/null; then
-        sudo $pm install -y git
-    fi
-    sudo git clone https://github.com/coreruleset/coreruleset.git /usr/share/modsecurity-crs || { echo "[X] Failed to clone OWASP CRS."; return 1; }
-    echo "[*] OWASP CRS cloned to /usr/share/modsecurity-crs."
-    if [ -f /usr/share/modsecurity-crs/crs-setup.conf.example ]; then
-        sudo mv /usr/share/modsecurity-crs/crs-setup.conf.example /usr/share/modsecurity-crs/crs-setup.conf
-        echo "[*] Renamed crs-setup.conf.example to crs-setup.conf."
-    else
-        echo "[X] CRS setup file not found in the cloned directory."
-        return 1
-    fi
-
-    # Step 5: Update Apache’s security config to include the CRS
-    local sec_conf="/etc/apache2/mods-enabled/security2.conf"
-    if [ -f "$sec_conf" ]; then
-        if ! grep -q "IncludeOptional /etc/modsecurity/*.conf" "$sec_conf"; then
-            echo "IncludeOptional /etc/modsecurity/*.conf" | sudo tee -a "$sec_conf" >/dev/null
-        fi
-        if ! grep -q "Include /usr/share/modsecurity-crs/rules/" "$sec_conf"; then
-            echo "Include /usr/share/modsecurity-crs/rules/*.conf" | sudo tee -a "$sec_conf" >/dev/null
-        fi
-        echo "[*] Updated security2.conf to include ModSecurity CRS."
-    else
-        echo "[X] Apache security configuration (security2.conf) not found."
-    fi
-
-    # Step 6: Restart Apache to load CRS rules
-    if systemctl is-active apache2 &>/dev/null; then
-        sudo systemctl restart apache2
-    elif systemctl is-active httpd &>/dev/null; then
-        sudo systemctl restart httpd
-    fi
-    echo "[*] ModSecurity configuration applied and Apache restarted."
-}
 
 
 function setup_service_restart_cronjob {
@@ -3205,12 +3227,12 @@ function show_web_hardening_menu {
             disable_phpmyadmin
             ;;
         10)
-            print_banner "Configuring ModSecurity"
+            print_banner "Configuring ModSecurity (Block Mode + OWASP CRS)"
             configure_modsecurity
             ;;
         11)
-            print_banner "Advanced Web Hardening Configs"
-            #adv_harden_web
+            print_banner "Advanced Web Hardening Configurations"
+            adv_harden_web
             ;;
         12)
             echo "[*] Exiting Web Hardening Menu"
@@ -3220,6 +3242,7 @@ function show_web_hardening_menu {
             ;;
     esac
 }
+
 
 
 
