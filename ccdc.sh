@@ -2412,19 +2412,45 @@ function handle_non_immutable_dirs {
 
 
 function kill_other_sessions {
-    print_banner "Killing Non-Active Sessions"
-    current_tty=$(tty | sed 's|/dev/||')
-    echo "[*] Current session: $current_tty"
-    other_ttys=$(who | awk -v ct="$current_tty" '$2 != ct {print $2}' | sort -u)
-    if [ -n "$other_ttys" ]; then
-        echo "[*] Killing sessions on ttys: $other_ttys"
-        for tty in $other_ttys; do
-            sudo pkill -KILL -t "$tty"
-        done
+    print_banner "Killing Non‑Active Sessions"
+
+    # 1) Who actually ran this script?
+    if [ -n "$SUDO_USER" ]; then
+        target_user="$SUDO_USER"
     else
-        echo "[*] No other sessions found."
+        target_user="$USER"
     fi
+
+    # 2) Which TTY am I on?
+    current_tty=$(tty)
+    # strip the leading "/dev/"
+    current_tty="${current_tty#/dev/}"
+
+    echo "[*] Invoking user: $target_user"
+    echo "[*] Current TTY:     $current_tty"
+
+    # 3) Collect all of that user’s TTYs except the current one
+    mapfile -t other_ttys < <(
+        who | awk -v u="$target_user" -v ct="$current_tty" '
+            $1==u && $2!=ct { print $2 }
+        ' | sort -u
+    )
+
+    if [ ${#other_ttys[@]} -eq 0 ]; then
+        echo "[*] No other sessions found for $target_user."
+        return 0
+    fi
+
+    echo "[*] Will kill $target_user’s sessions on: ${other_ttys[*]}"
+    for tty in "${other_ttys[@]}"; do
+        echo "[*] Killing processes for $target_user on TTY $tty"
+        # Only kills processes belonging to that user on that tty
+        pkill -KILL -u "$target_user" -t "$tty"
+    done
+
+    echo "[*] Done."
 }
+
 
 function defend_against_forkbomb {
     print_banner "Defending Against Fork Bombing"
