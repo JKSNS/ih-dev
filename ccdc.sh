@@ -1622,104 +1622,88 @@ Employees are required to notify their administrators immediately of any known o
 function secure_ssh {
     print_banner "Securing SSH"
 
-    local service_name=""
-
-    ############################################################
-    # 1) Try detecting SSH via systemctl for ssh.service or sshd.service
-    ############################################################
+    # Determine SSH service name using systemctl first, then legacy service command.
     if command -v systemctl &>/dev/null; then
-        # If either 'ssh' or 'sshd' is active or enabled, pick that
-        if systemctl is-active --quiet ssh; then
-            service_name="ssh"
-        elif systemctl is-active --quiet sshd; then
+        if systemctl is-active sshd &>/dev/null; then
             service_name="sshd"
-        # Alternatively, check if they exist but might be inactive
-        elif systemctl list-unit-files | grep -q "^ssh\.service"; then
+        elif systemctl is-active ssh &>/dev/null; then
             service_name="ssh"
-        elif systemctl list-unit-files | grep -q "^sshd\.service"; then
-            service_name="sshd"
+        else
+            echo "[*] SSH service not detected via systemctl. Trying legacy method..."
         fi
     fi
 
-    ############################################################
-    # 2) If not found via systemctl, try SysV init "service" commands
-    ############################################################
     if [ -z "$service_name" ]; then
-        if command -v service &>/dev/null; then
-            if service sshd status &>/dev/null; then
-                service_name="sshd"
-            elif service ssh status &>/dev/null; then
-                service_name="ssh"
-            fi
+        # Fallback to legacy service command.
+        if sudo service sshd status &>/dev/null; then
+            service_name="sshd"
+        elif sudo service ssh status &>/dev/null; then
+            service_name="ssh"
+        else
+            echo "[*] SSH service not found. Skipping SSH hardening."
+            return
         fi
     fi
 
-    ############################################################
-    # 3) If we still have nothing, give up
-    ############################################################
-    if [ -z "$service_name" ]; then
-        echo "[X] No active or installed SSH/sshd service found. Skipping SSH hardening."
-        return 0
-    else
-        echo "[*] Detected SSH service name: $service_name"
-    fi
-
-    ############################################################
-    # 4) Apply hardening to the sshd_config
-    ############################################################
-    # Depending on distro, the default config file is usually /etc/ssh/sshd_config
-    local config_file="/etc/ssh/sshd_config"
+    config_file="/etc/ssh/sshd_config"
     if [ ! -f "$config_file" ]; then
         echo "[X] ERROR: SSH configuration file not found: $config_file"
-        return 1
+        return
     fi
 
     # Backup current sshd_config
+    echo "[*] Backing up $config_file to ${config_file}.bak..."
     sudo cp "$config_file" "${config_file}.bak"
+
+    # Ensure /run/sshd exists for privilege separation; create it if missing.
+    if [ ! -d "/run/sshd" ]; then
+        echo "[*] /run/sshd does not exist. Creating it..."
+        sudo mkdir -p /run/sshd
+        sudo chown root:root /run/sshd
+        sudo chmod 755 /run/sshd
+    fi
+
+    # (Optional) Remove the UsePrivilegeSeparation directive if present since modern OpenSSH may not need it.
+    sudo sed -i '/^UsePrivilegeSeparation/d' "$config_file"
 
     # 1. Disable Root Login
     sudo sed -i '/^PermitRootLogin/d' "$config_file"
     echo "PermitRootLogin no" | sudo tee -a "$config_file" >/dev/null
 
-    # 2. (Optional) Allow only specific users or groups
-    #   e.g. echo "AllowUsers ccdcuser1 ccdcuser2" | sudo tee -a "$config_file" >/dev/null
+    # 2. (Optional) Allow only specific users/groups if desired.
+    # Example:
+    # echo "AllowUsers ccdcuser1 ccdcuser2" | sudo tee -a "$config_file" >/dev/null
 
-    # 3. Deny specific users or groups if desired
-    #   e.g. echo "DenyUsers apache www-data" | sudo tee -a "$config_file" >/dev/null
+    # 3. (Optional) Deny specific users/groups if desired.
+    # Example:
+    # echo "DenyUsers apache www-data" | sudo tee -a "$config_file" >/dev/null
 
-    # 4. (Optional) Change SSH port if you want
-    #   e.g. echo "Port 2222" | sudo tee -a "$config_file" >/dev/null
-
-    # 5. Change Login Grace Time to 1 minute.
+    # 4. Change Login Grace Time to 1 minute.
     sudo sed -i '/^LoginGraceTime/d' "$config_file"
     echo "LoginGraceTime 1m" | sudo tee -a "$config_file" >/dev/null
 
-    # 6. Restrict the interface(s) if you want (ListenAddress) ...
-    #   e.g. echo "ListenAddress 192.168.10.200" | sudo tee -a "$config_file" >/dev/null
-
-    # 7. Set SSH idle timeout (ClientAliveInterval and ClientAliveCountMax).
+    # 5. Set SSH idle timeout (ClientAliveInterval and ClientAliveCountMax).
     sudo sed -i '/^ClientAliveInterval/d' "$config_file"
     sudo sed -i '/^ClientAliveCountMax/d' "$config_file"
     echo "ClientAliveInterval 600" | sudo tee -a "$config_file" >/dev/null
     echo "ClientAliveCountMax 0" | sudo tee -a "$config_file" >/dev/null
 
-    # Deny empty passwords.
+    # 6. Deny empty passwords.
     sudo sed -i '/^PermitEmptyPasswords/d' "$config_file"
     echo "PermitEmptyPasswords no" | sudo tee -a "$config_file" >/dev/null
 
-    # IPv4 only
+    # 7. Force SSH to use IPv4.
     sudo sed -i '/^AddressFamily/d' "$config_file"
     echo "AddressFamily inet" | sudo tee -a "$config_file" >/dev/null
 
-    # Disable DNS lookups
+    # 8. Disable DNS lookups.
     sudo sed -i '/^UseDNS/d' "$config_file"
     echo "UseDNS no" | sudo tee -a "$config_file" >/dev/null
 
-    ############################################################
-    # 5) Test & restart the SSH service
-    ############################################################
+    # Test the SSH configuration before restarting.
+    echo "[*] Testing SSH configuration..."
     if sudo sshd -t; then
-        echo "[*] sshd config syntax is OK. Restarting $service_name..."
+        echo "[*] SSH configuration test passed. Restarting SSH service ($service_name)..."
         if command -v systemctl &>/dev/null; then
             sudo systemctl restart "$service_name"
         else
@@ -1731,6 +1715,7 @@ function secure_ssh {
         sudo cp "${config_file}.bak" "$config_file"
     fi
 }
+
 
 
 
