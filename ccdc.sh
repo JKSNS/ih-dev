@@ -1958,42 +1958,39 @@ function adv_harden_web() {
 ###############################################################################
 function configure_modsecurity {
     print_banner "Configuring ModSecurity with Blocking Mode & OWASP CRS"
-
-    # 1) Ensure the /etc/modsecurity directory exists
+    
+    # 1) Ensure the /etc/modsecurity directory exists.
     if [ ! -d "/etc/modsecurity" ]; then
         sudo mkdir -p /etc/modsecurity
     fi
 
-    # 2) Copy modsecurity.conf-recommended -> modsecurity.conf (set SecRuleEngine On)
+    # 2) Copy the recommended configuration file and change the rule engine from DetectionOnly to On.
     local recommended_conf="/etc/modsecurity/modsecurity.conf-recommended"
     local main_conf="/etc/modsecurity/modsecurity.conf"
     if [ -f "$recommended_conf" ]; then
         sudo cp "$recommended_conf" "$main_conf"
-        # Change from DetectionOnly to On (case-insensitive)
+        # Change 'SecRuleEngine DetectionOnly' to 'SecRuleEngine On' (case-insensitive)
         sudo sed -i 's/^SecRuleEngine\s\+DetectionOnly/SecRuleEngine On/I' "$main_conf"
     else
         echo "[X] ERROR: $recommended_conf not found! Cannot configure ModSecurity."
         return 1
     fi
 
-    # Fix ownership/permissions on main config
     sudo chown root:root "$main_conf"
     sudo chmod 644 "$main_conf"
 
-    # 3) Ensure an audit log file is in place
+    # 3) Ensure the ModSecurity audit log file exists with proper permissions.
     local audit_log="/var/log/apache2/modsec_audit.log"
-    if [ ! -d "/var/log/apache2" ]; then
-        sudo mkdir -p /var/log/apache2
-    fi
+    sudo mkdir -p /var/log/apache2
     if [ ! -f "$audit_log" ]; then
         sudo touch "$audit_log"
     fi
     sudo chown www-data:www-data "$audit_log"
     sudo chmod 640 "$audit_log"
 
-    # 4) Clone or update the OWASP CRS in /usr/share/owasp-modsecurity-crs
+    # 4) Clone or update the OWASP CRS in /usr/share/owasp-modsecurity-crs.
     if [ ! -d "/usr/share/owasp-modsecurity-crs" ]; then
-        echo "[*] OWASP CRS not found. Cloning from GitHub..."
+        echo "[*] Cloning OWASP CRS..."
         if command -v git &>/dev/null; then
             sudo git clone https://github.com/coreruleset/coreruleset.git /usr/share/owasp-modsecurity-crs
             if [ $? -ne 0 ]; then
@@ -2005,68 +2002,56 @@ function configure_modsecurity {
             return 1
         fi
     else
-        echo "[*] OWASP CRS directory found. Pulling latest changes..."
+        echo "[*] OWASP CRS already present. Pulling latest changes..."
         sudo git -C /usr/share/owasp-modsecurity-crs pull
     fi
 
-    # 5) Copy crs-setup.conf.example -> /etc/modsecurity/crs-setup.conf if not already present
-    if [ ! -f "/etc/modsecurity/crs-setup.conf" ] && [ -f "/usr/share/owasp-modsecurity-crs/crs-setup.conf.example" ]; then
-        sudo cp /usr/share/owasp-modsecurity-crs/crs-setup.conf.example /etc/modsecurity/crs-setup.conf
+    # 5) Backup the less secure configuration file to prevent duplicate rule IDs.
+    #    This moves the file /usr/share/owasp-modsecurity-crs/crs-setup.conf.example to a .bak file.
+    if [ -f "/usr/share/owasp-modsecurity-crs/crs-setup.conf.example" ]; then
+        echo "[*] Backing up duplicate configuration: crs-setup.conf.example → crs-setup.conf.example.bak"
+        sudo mv /usr/share/owasp-modsecurity-crs/crs-setup.conf.example /usr/share/owasp-modsecurity-crs/crs-setup.conf.example.bak
     fi
 
-    # 6) Edit Apache's security2.conf to include our modsecurity.conf and the CRS
+    # 6) Copy the updated CRS setup file into /etc/modsecurity (if not already present).
+    if [ ! -f "/etc/modsecurity/crs-setup.conf" ] && [ -f "/usr/share/owasp-modsecurity-crs/crs-setup.conf.example.bak" ]; then
+        sudo cp /usr/share/owasp-modsecurity-crs/crs-setup.conf.example.bak /etc/modsecurity/crs-setup.conf
+    fi
+
+    # 7) Modify Apache's security2 configuration to include the OWASP CRS and our modsecurity.conf.
     local sec_conf="/etc/apache2/mods-enabled/security2.conf"
     local backup_sec_conf="/etc/apache2/mods-enabled/security2.conf.bak"
-
-    if [ ! -f "$sec_conf" ]; then
-        echo "[X] ERROR: $sec_conf not found. Ensure 'a2enmod security2' is enabled."
+    if [ -f "$sec_conf" ]; then
+        sudo cp "$sec_conf" "$backup_sec_conf"
+        # Append include lines if not already present.
+        grep -q "Include /etc/modsecurity/crs-setup.conf" "$sec_conf" || echo "Include /etc/modsecurity/crs-setup.conf" | sudo tee -a "$sec_conf" >/dev/null
+        grep -q "Include /usr/share/owasp-modsecurity-crs/rules/*.conf" "$sec_conf" || echo "Include /usr/share/owasp-modsecurity-crs/rules/*.conf" | sudo tee -a "$sec_conf" >/dev/null
+    else
+        echo "[X] ERROR: $sec_conf not found. Ensure ModSecurity is enabled via a2enmod security2."
         return 1
     fi
 
-    sudo cp "$sec_conf" "$backup_sec_conf"
-
-    # Attempt to remove or comment out any 'owasp-crs.load' lines that might cause duplication
-    # (particularly in Debian-based distros that install modsecurity-crs by default).
-    # If found, comment them out to avoid double-inclusion of the same rules.
-    if grep -q "owasp-crs.load" "$sec_conf"; then
-        echo "[!] Detected possible duplicate 'owasp-crs.load' references. Commenting them out..."
-        sudo sed -i 's|^IncludeOptional /usr/share/modsecurity-crs/owasp-crs\.load|#IncludeOptional /usr/share/modsecurity-crs/owasp-crs.load|g' "$sec_conf"
-    fi
-
-    # Ensure we have an 'Include' line for /etc/modsecurity/crs-setup.conf
-    if ! grep -q "Include /etc/modsecurity/crs-setup.conf" "$sec_conf"; then
-        echo "Include /etc/modsecurity/crs-setup.conf" | sudo tee -a "$sec_conf" >/dev/null
-    fi
-
-    # Ensure we have an 'Include' line for the CRS rules
-    if ! grep -q "Include /usr/share/owasp-modsecurity-crs/rules/*.conf" "$sec_conf"; then
-        echo "Include /usr/share/owasp-modsecurity-crs/rules/*.conf" | sudo tee -a "$sec_conf" >/dev/null
-    fi
-
-    # 7) Test Apache config before actually bouncing the service
-    echo "[*] Testing Apache configuration with 'apachectl -t'..."
+    # 8) Test Apache configuration before restart.
+    echo "[*] Testing Apache configuration..."
     if ! sudo apachectl -t 2>/tmp/apache_test.err; then
         echo "[X] ERROR: Apache config test failed. Output:"
         cat /tmp/apache_test.err
-
-        # If we see "Found another rule with the same id" in the error,
-        # it usually means there's still a duplicate set of rules.
-        # We revert the config changes so we don't break Apache entirely.
-        sudo mv "$backup_sec_conf" "$sec_conf"
+        sudo mv "$backup_sec_conf" "$sec_conf"  # revert changes
         return 1
     fi
 
-    # 8) If test passes, restart Apache
-    echo "[*] Config test passed. Restarting Apache..."
+    # 9) Restart Apache.
+    echo "[*] Restarting Apache..."
     if ! sudo systemctl restart apache2; then
-        echo "[X] ERROR: Apache failed to restart. Reverting changes..."
+        echo "[X] ERROR: Apache failed to restart. Reverting configuration changes."
         sudo mv "$backup_sec_conf" "$sec_conf"
         return 1
     fi
 
-    echo "[*] ModSecurity successfully configured in blocking mode with OWASP CRS."
+    echo "[*] ModSecurity configured to block suspicious activity and OWASP CRS is included."
     return 0
 }
+
 
 # Optionally, a function to fix the ModSecurity audit log file permissions.
 function fix_modsecurity_audit_log() {
