@@ -1852,6 +1852,7 @@ function install_modsecurity_docker {
 ###############################################################################
 
 # Disable directory browsing for Apache or Nginx.
+# Disable directory browsing for Apache (idempotent, targets /var/www/html by default)
 function disable_directory_browsing() {
     local webroot="${1:-/var/www/html}"
     local apache_conf="/etc/apache2/apache2.conf"
@@ -1863,17 +1864,20 @@ function disable_directory_browsing() {
 
     echo "[*] Disabling directory browsing for Apache on $webroot..."
 
-    # 1) Ensure .htaccess is allowed if you need it later
+    # 1) Ensure AllowOverride All so .htaccess can work if you need it later
     sudo sed -i "/<Directory ${webroot//\//\\/}>/,/<\/Directory>/ s/AllowOverride None/AllowOverride All/" "$apache_conf"
 
-    # 2) Add "-Indexes" only if it's not already there
+    # 2) Add "-Indexes" only if it isn't already there
     sudo sed -i "/<Directory ${webroot//\//\\/}>/,/<\/Directory>/ {
         /Options/ {
             /-Indexes/! s/Options[[:space:]]\+/Options -Indexes /
         }
     }" "$apache_conf"
 
-    # 3) One restart at the end
+    # 3) Reload systemd manager configuration (in case a2enmod was run elsewhere)
+    sudo systemctl daemon-reload
+
+    # 4) Restart Apache once
     if ! sudo systemctl restart apache2; then
         echo "[X] Failed to restart Apache."
         return 1
@@ -1889,11 +1893,10 @@ function set_security_headers() {
 
     echo "[*] Setting security headers in $htaccess..."
 
-    # 1) Ensure mod_headers is enabled
+    # 1) Enable mod_headers if needed
     if ! apachectl -M 2>/dev/null | grep -q headers_module; then
         echo "[*] Enabling mod_headers..."
         sudo a2enmod headers
-        sudo systemctl restart apache2
     fi
 
     # 2) Create .htaccess if it doesn't exist
@@ -1919,6 +1922,10 @@ EOF"
     else
         echo "[*] Security headers already present in $htaccess"
     fi
+
+    # 4) Reload systemd manager configuration and restart Apache
+    sudo systemctl daemon-reload
+    sudo systemctl restart apache2
 }
 
 # Hide web server version information (for Apache or Nginx)
