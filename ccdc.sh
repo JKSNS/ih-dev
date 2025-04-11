@@ -3208,7 +3208,7 @@ function show_menu {
             setup_proxy_and_ca
             ;;
         9)
-            _hardening_menu
+            show_web_hardening_menu
             ;;
         10)
             advanced_hardening
