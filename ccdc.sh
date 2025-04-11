@@ -1855,36 +1855,70 @@ function install_modsecurity_docker {
 function disable_directory_browsing() {
     local webroot="${1:-/var/www/html}"
     local apache_conf="/etc/apache2/apache2.conf"
-    local nginx_conf="/etc/nginx/nginx.conf"
-    if [ -f "$apache_conf" ]; then
-        echo "[*] Disabling directory browsing for Apache..."
-        sudo sed -i '/<Directory \/var\/www\/>/,/<\/Directory>/ s/Options Indexes/Options -Indexes/' "$apache_conf"
-        sudo systemctl restart apache2 2>/dev/null || echo "[X] Failed to restart Apache."
-    elif [ -f "$nginx_conf" ]; then
-        echo "[*] Disabling directory browsing for Nginx..."
-        sudo sed -i '/location \// s/autoindex on;/autoindex off;/' "$nginx_conf"
-        sudo systemctl restart nginx 2>/dev/null || echo "[X] Failed to restart Nginx."
-    else
-        echo "[X] No supported web server configuration found."
+
+    if [ ! -f "$apache_conf" ]; then
+        echo "[X] Apache config not found at $apache_conf"
+        return 1
     fi
+
+    echo "[*] Disabling directory browsing for Apache on $webroot..."
+
+    # 1) Ensure .htaccess is allowed if you need it later
+    sudo sed -i "/<Directory ${webroot//\//\\/}>/,/<\/Directory>/ s/AllowOverride None/AllowOverride All/" "$apache_conf"
+
+    # 2) Add "-Indexes" only if it's not already there
+    sudo sed -i "/<Directory ${webroot//\//\\/}>/,/<\/Directory>/ {
+        /Options/ {
+            /-Indexes/! s/Options[[:space:]]\+/Options -Indexes /
+        }
+    }" "$apache_conf"
+
+    # 3) One restart at the end
+    if ! sudo systemctl restart apache2; then
+        echo "[X] Failed to restart Apache."
+        return 1
+    fi
+
+    echo "[*] Directory browsing disabled (Options -Indexes) in $apache_conf"
 }
 
-# Set essential security headers in the .htaccess file.
+# Set essential security headers in the .htaccess file (idempotent, wrapped in IfModule)
 function set_security_headers() {
     local webroot="${1:-/var/www/html}"
     local htaccess="$webroot/.htaccess"
+
     echo "[*] Setting security headers in $htaccess..."
+
+    # 1) Ensure mod_headers is enabled
+    if ! apachectl -M 2>/dev/null | grep -q headers_module; then
+        echo "[*] Enabling mod_headers..."
+        sudo a2enmod headers
+        sudo systemctl restart apache2
+    fi
+
+    # 2) Create .htaccess if it doesn't exist
     if [ ! -f "$htaccess" ]; then
         sudo touch "$htaccess"
         sudo chown root:www-data "$htaccess"
         sudo chmod 0644 "$htaccess"
     fi
-    # Add headers if not already present.
-    grep -q "X-Frame-Options" "$htaccess" || echo 'Header always set X-Frame-Options "DENY"' | sudo tee -a "$htaccess" >/dev/null
-    grep -q "X-Content-Type-Options" "$htaccess" || echo 'Header always set X-Content-Type-Options "nosniff"' | sudo tee -a "$htaccess" >/dev/null
-    grep -q "Content-Security-Policy" "$htaccess" || echo 'Header always set Content-Security-Policy "default-src '\''self'\''; script-src '\''self'\'' https://trusted.cdn.com; object-src '\''none'\'';"' | sudo tee -a "$htaccess" >/dev/null
-    grep -q "Strict-Transport-Security" "$htaccess" || echo 'Header always set Strict-Transport-Security "max-age=31536000; includeSubDomains"' | sudo tee -a "$htaccess" >/dev/null
-    grep -q "Referrer-Policy" "$htaccess" || echo 'Header always set Referrer-Policy "no-referrer"' | sudo tee -a "$htaccess" >/dev/null
+
+    # 3) Append headers only once, wrapped in <IfModule>
+    if ! grep -q "Header always set X-Frame-Options" "$htaccess"; then
+        sudo bash -c "cat >> '$htaccess' << 'EOF'
+
+<IfModule mod_headers.c>
+    Header always set X-Frame-Options \"DENY\"
+    Header always set X-Content-Type-Options \"nosniff\"
+    Header always set Content-Security-Policy \"default-src 'self'; script-src 'self' https://trusted.cdn.com; object-src 'none';\"
+    Header always set Strict-Transport-Security \"max-age=31536000; includeSubDomains\"
+    Header always set Referrer-Policy \"no-referrer\"
+</IfModule>
+EOF"
+        echo "[*] Security headers appended to $htaccess"
+    else
+        echo "[*] Security headers already present in $htaccess"
+    fi
 }
 
 # Hide web server version information (for Apache or Nginx)
