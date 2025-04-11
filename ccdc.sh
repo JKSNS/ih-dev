@@ -1620,103 +1620,110 @@ Employees are required to notify their administrators immediately of any known o
 
 
 function secure_ssh {
-    print_banner "Securing SSH"
+    echo "################"
+    echo "Securing SSH"
+    echo "################"
 
-    # Define candidate SSH service names that are commonly used.
-    local candidate_services=("sshd" "ssh")
-    local service_found=""
+    # Step 1: Check if SSH service is installed
+    if command -v sshd &>/dev/null; then
+        service_name="sshd"
+    elif command -v ssh &>/dev/null; then
+        service_name="ssh"
+    else
+        echo "[*] SSH service not found. Attempting to install..."
 
-    # Attempt to find an active SSH service using systemctl, if available.
-    if command -v systemctl &>/dev/null; then
-        for svc in "${candidate_services[@]}"; do
-            if systemctl is-active "$svc" &>/dev/null; then
-                service_found="$svc"
-                break
-            fi
-        done
+        # Attempt to install SSH based on the system's package manager
+        if command -v apt-get &>/dev/null; then
+            sudo apt-get update
+            sudo apt-get install -y openssh-server
+        elif command -v yum &>/dev/null; then
+            sudo yum install -y openssh-server
+        elif command -v dnf &>/dev/null; then
+            sudo dnf install -y openssh-server
+        elif command -v zypper &>/dev/null; then
+            sudo zypper install -y openssh
+        else
+            echo "[X] ERROR: Could not determine package manager to install SSH."
+            return 1
+        fi
+
+        # Verify installation
+        if command -v sshd &>/dev/null; then
+            service_name="sshd"
+        elif command -v ssh &>/dev/null; then
+            service_name="ssh"
+        else
+            echo "[X] ERROR: Failed to install SSH service."
+            return 1
+        fi
     fi
 
-    # If not found using systemctl, fall back to the legacy service command.
-    if [ -z "$service_found" ]; then
-        for svc in "${candidate_services[@]}"; do
-            if sudo service "$svc" status &>/dev/null; then
-                service_found="$svc"
-                break
-            fi
-        done
+    # Step 2: Check if SSH service is running
+    if ! sudo systemctl is-active --quiet "$service_name"; then
+        echo "[*] SSH service is not running. Attempting to start..."
+        sudo systemctl start "$service_name"
+        if ! sudo systemctl is-active --quiet "$service_name"; then
+            echo "[X] ERROR: Failed to start SSH service."
+            return 1
+        fi
     fi
 
-    if [ -z "$service_found" ]; then
-        echo "[*] SSH service not found. Skipping SSH hardening."
-        return
+    # Step 3: Ensure SSH service is enabled to start on boot
+    if ! sudo systemctl is-enabled --quiet "$service_name"; then
+        echo "[*] Enabling SSH service to start on boot..."
+        sudo systemctl enable "$service_name"
     fi
 
-    echo "[*] Detected SSH service: $service_found"
-
-    # Define the SSH configuration file location
-    local config_file="/etc/ssh/sshd_config"
+    # Step 4: Apply SSH hardening
+    config_file="/etc/ssh/sshd_config"
     if [ ! -f "$config_file" ]; then
         echo "[X] ERROR: SSH configuration file not found: $config_file"
-        return
+        return 1
     fi
 
-    # Backup the current SSH configuration
-    echo "[*] Backing up $config_file to ${config_file}.bak..."
+    # Backup the original configuration file
     sudo cp "$config_file" "${config_file}.bak"
+    echo "[*] Backed up $config_file to ${config_file}.bak"
 
-    # Ensure the privilege separation directory exists (this helps prevent errors)
-    if [ ! -d "/run/sshd" ]; then
-        echo "[*] /run/sshd does not exist. Creating it..."
-        sudo mkdir -p /run/sshd
-        sudo chown root:root /run/sshd
-        sudo chmod 755 /run/sshd
-    fi
-
-    # (Optional) Remove deprecated UsePrivilegeSeparation directive.
-    sudo sed -i '/^UsePrivilegeSeparation/d' "$config_file"
-
-    # 1. Disable root login.
+    # Apply hardening configurations
+    ## Disable root login
     sudo sed -i '/^PermitRootLogin/d' "$config_file"
     echo "PermitRootLogin no" | sudo tee -a "$config_file" >/dev/null
 
-    # 2. Set the login grace time to 1 minute.
+    ## Set login grace time to 1 minute
     sudo sed -i '/^LoginGraceTime/d' "$config_file"
     echo "LoginGraceTime 1m" | sudo tee -a "$config_file" >/dev/null
 
-    # 3. Set SSH idle timeout settings.
+    ## Set idle timeout (10 minutes)
     sudo sed -i '/^ClientAliveInterval/d' "$config_file"
     sudo sed -i '/^ClientAliveCountMax/d' "$config_file"
     echo "ClientAliveInterval 600" | sudo tee -a "$config_file" >/dev/null
     echo "ClientAliveCountMax 0" | sudo tee -a "$config_file" >/dev/null
 
-    # 4. Deny empty passwords.
+    ## Deny empty passwords
     sudo sed -i '/^PermitEmptyPasswords/d' "$config_file"
     echo "PermitEmptyPasswords no" | sudo tee -a "$config_file" >/dev/null
 
-    # 5. Force SSH to use IPv4.
+    ## Use IPv4 only
     sudo sed -i '/^AddressFamily/d' "$config_file"
     echo "AddressFamily inet" | sudo tee -a "$config_file" >/dev/null
 
-    # 6. Disable DNS lookups.
+    ## Disable DNS lookups
     sudo sed -i '/^UseDNS/d' "$config_file"
     echo "UseDNS no" | sudo tee -a "$config_file" >/dev/null
 
-    # Test the updated SSH configuration.
-    echo "[*] Testing SSH configuration..."
+    # Step 5: Test and apply the new configuration
     if sudo sshd -t; then
-        echo "[*] SSH configuration test passed. Restarting SSH service ($service_found)..."
-        if command -v systemctl &>/dev/null; then
-            sudo systemctl restart "$service_found"
-        else
-            sudo service "$service_found" restart
-        fi
-        echo "[*] SSH service restarted successfully."
+        # Restart the SSH service
+        sudo systemctl restart "$service_name"
+        echo "[*] SSH hardening applied and $service_name restarted successfully."
     else
         echo "[X] ERROR: SSH configuration test failed. Restoring original configuration."
         sudo cp "${config_file}.bak" "$config_file"
+        sudo systemctl restart "$service_name"
+        return 1
     fi
 }
-
 
 
 
