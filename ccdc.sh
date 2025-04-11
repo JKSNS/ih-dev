@@ -1969,7 +1969,7 @@ function configure_modsecurity {
     local main_conf="/etc/modsecurity/modsecurity.conf"
     if [ -f "$recommended_conf" ]; then
         sudo cp "$recommended_conf" "$main_conf"
-        # Change 'SecRuleEngine DetectionOnly' to 'SecRuleEngine On' (case-insensitive)
+        # Replace 'SecRuleEngine DetectionOnly' with 'SecRuleEngine On' (case-insensitive)
         sudo sed -i 's/^SecRuleEngine\s\+DetectionOnly/SecRuleEngine On/I' "$main_conf"
     else
         echo "[X] ERROR: $recommended_conf not found! Cannot configure ModSecurity."
@@ -1988,7 +1988,7 @@ function configure_modsecurity {
     sudo chown www-data:www-data "$audit_log"
     sudo chmod 640 "$audit_log"
 
-    # 4) Clone or update the OWASP CRS in /usr/share/owasp-modsecurity-crs.
+    # 4) Clone or update the OWASP CRS into /usr/share/owasp-modsecurity-crs.
     if [ ! -d "/usr/share/owasp-modsecurity-crs" ]; then
         echo "[*] Cloning OWASP CRS..."
         if command -v git &>/dev/null; then
@@ -2006,16 +2006,16 @@ function configure_modsecurity {
         sudo git -C /usr/share/owasp-modsecurity-crs pull
     fi
 
-    # 5) Backup the less secure configuration file to prevent duplicate rule IDs.
-    #    This moves the file /usr/share/owasp-modsecurity-crs/crs-setup.conf.example to a .bak file.
+    # 5) Remove the duplicate (less secure) CRS setup file entirely to avoid duplicate rule IDs.
     if [ -f "/usr/share/owasp-modsecurity-crs/crs-setup.conf.example" ]; then
-        echo "[*] Backing up duplicate configuration: crs-setup.conf.example → crs-setup.conf.example.bak"
-        sudo mv /usr/share/owasp-modsecurity-crs/crs-setup.conf.example /usr/share/owasp-modsecurity-crs/crs-setup.conf.example.bak
+        echo "[*] Removing duplicate configuration file: /usr/share/owasp-modsecurity-crs/crs-setup.conf.example"
+        sudo rm -f /usr/share/owasp-modsecurity-crs/crs-setup.conf.example
     fi
 
-    # 6) Copy the updated CRS setup file into /etc/modsecurity (if not already present).
-    if [ ! -f "/etc/modsecurity/crs-setup.conf" ] && [ -f "/usr/share/owasp-modsecurity-crs/crs-setup.conf.example.bak" ]; then
-        sudo cp /usr/share/owasp-modsecurity-crs/crs-setup.conf.example.bak /etc/modsecurity/crs-setup.conf
+    # 6) If a valid CRS setup file is not present in /etc/modsecurity, output a message.
+    if [ ! -f "/etc/modsecurity/crs-setup.conf" ]; then
+        echo "[*] Warning: No CRS setup file found in /etc/modsecurity."
+        echo "[*] Please create /etc/modsecurity/crs-setup.conf with your desired CRS configuration."
     fi
 
     # 7) Modify Apache's security2 configuration to include the OWASP CRS and our modsecurity.conf.
@@ -2023,11 +2023,10 @@ function configure_modsecurity {
     local backup_sec_conf="/etc/apache2/mods-enabled/security2.conf.bak"
     if [ -f "$sec_conf" ]; then
         sudo cp "$sec_conf" "$backup_sec_conf"
-        # Append include lines if not already present.
         grep -q "Include /etc/modsecurity/crs-setup.conf" "$sec_conf" || echo "Include /etc/modsecurity/crs-setup.conf" | sudo tee -a "$sec_conf" >/dev/null
         grep -q "Include /usr/share/owasp-modsecurity-crs/rules/*.conf" "$sec_conf" || echo "Include /usr/share/owasp-modsecurity-crs/rules/*.conf" | sudo tee -a "$sec_conf" >/dev/null
     else
-        echo "[X] ERROR: $sec_conf not found. Ensure ModSecurity is enabled via a2enmod security2."
+        echo "[X] ERROR: $sec_conf not found. Ensure ModSecurity is enabled with 'a2enmod security2'."
         return 1
     fi
 
@@ -2051,6 +2050,7 @@ function configure_modsecurity {
     echo "[*] ModSecurity configured to block suspicious activity and OWASP CRS is included."
     return 0
 }
+
 
 
 # Optionally, a function to fix the ModSecurity audit log file permissions.
