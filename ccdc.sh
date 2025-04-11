@@ -2031,7 +2031,7 @@ function configure_modsecurity {
         grep -q "Include /etc/modsecurity/crs/crs-setup.conf" "$sec_conf" || \
             echo "Include /etc/modsecurity/crs/crs-setup.conf" | sudo tee -a "$sec_conf" >/dev/null
 
-        # (2) "Include /etc/modsecurity/crs/rules/*.conf" (assuming you place rules here)
+        # (2) "Include /usr/share/modsecurity-crs/rules/*.conf" (assuming you place rules here)
         grep -q "Include /usr/share/modsecurity-crs/rules/*.conf" "$sec_conf" || \
             echo "Include /usr/share/modsecurity-crs/rules/*.conf" | sudo tee -a "$sec_conf" >/dev/null
     else
@@ -2061,8 +2061,9 @@ function configure_modsecurity {
     # 9) Append 'SecRuleEngine On' in the Apache default site configuration file
     local default_site="/etc/apache2/sites-enabled/000-default.conf"
     if [ -f "$default_site" ]; then
-        sudo sed -i '/CustomLog ${APACHE_LOG_DIR}\/access.log combined/ a\
-    SecRuleEngine On' "$default_site"
+        sudo sed -i '/CustomLog ${APACHE_LOG_DIR}\/access.log combined/ a \
+        SecRuleEngine On
+' "$default_site"
         echo "[*] Inserted 'SecRuleEngine On' into $default_site"
     else
         echo "[X] ERROR: $default_site not found!"
@@ -2071,6 +2072,7 @@ function configure_modsecurity {
 
     return 0
 }
+
 
 
 
