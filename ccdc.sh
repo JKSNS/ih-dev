@@ -2061,8 +2061,8 @@ function configure_modsecurity {
     # 9) Append 'SecRuleEngine On' in the Apache default site configuration file
     local default_site="/etc/apache2/sites-enabled/000-default.conf"
     if [ -f "$default_site" ]; then
-        # Insert the line after the line containing "CustomLog ${APACHE_LOG_DIR}/access.log combined"
-        sudo sed -i '/CustomLog ${APACHE_LOG_DIR}\/access.log combined/ a\    SecRuleEngine On' "$default_site"
+        sudo sed -i '/CustomLog ${APACHE_LOG_DIR}\/access.log combined/ a\
+    SecRuleEngine On' "$default_site"
         echo "[*] Inserted 'SecRuleEngine On' into $default_site"
     else
         echo "[X] ERROR: $default_site not found!"
