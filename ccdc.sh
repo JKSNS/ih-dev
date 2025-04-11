@@ -1527,43 +1527,27 @@ function backup_databases {
 function secure_php_ini {
     print_banner "Securing php.ini Files"
     for ini in $(find / -name "php.ini" 2>/dev/null); do
-        echo "[+] Updating php.ini at $ini..."
-
-        # Remove any pre-existing directives so they don’t stack:
-        sed -i '/^disable_functions/d' "$ini"
-        sed -i '/^max_execution_time/d' "$ini"
-        sed -i '/^register_globals/d' "$ini"
-        sed -i '/^magic_quotes_gpc/d' "$ini"
-        sed -i '/^allow_url_fopen/d' "$ini"
-        sed -i '/^allow_url_include/d' "$ini"
-        sed -i '/^display_errors/d' "$ini"
-        sed -i '/^short_open_tag/d' "$ini"
-        sed -i '/^session\.cookie_httponly/d' "$ini"
-        sed -i '/^session\.use_only_cookies/d' "$ini"
-        sed -i '/^session\.cookie_secure/d' "$ini"
-
-        # Append the secure directives (as per your original instructions):
+        echo "[+] Writing php.ini options to $ini..."
         echo "disable_functions = shell_exec, exec, passthru, proc_open, popen, system, phpinfo" >> "$ini"
         echo "max_execution_time = 3" >> "$ini"
         echo "register_globals = off" >> "$ini"
-        echo "magic_quotes_gpc = on" >> "$ini"
+
+        # Only add magic_quotes_gpc if PHP still supports it
+        if php --ri magic_quotes_gpc &>/dev/null; then
+            echo "magic_quotes_gpc = on" >> "$ini"
+        else
+            echo "[*] Skipping magic_quotes_gpc: not supported by this PHP version"
+        fi
+
         echo "allow_url_fopen = off" >> "$ini"
         echo "allow_url_include = off" >> "$ini"
         echo "display_errors = off" >> "$ini"
         echo "short_open_tag = off" >> "$ini"
         echo "session.cookie_httponly = 1" >> "$ini"
         echo "session.use_only_cookies = 1" >> "$ini"
-
-        # Ask about HTTPS so that session cookies can be marked secure:
-        read -p "Is your website using HTTPS? (y/N): " use_https
-        if [[ "$use_https" =~ ^[Yy]$ ]]; then
-            echo "session.cookie_secure = 1" >> "$ini"
-        else
-            echo "session.cookie_secure = 0" >> "$ini"
-        fi
+        echo "session.cookie_secure = 1" >> "$ini"
     done
 }
-
 
 
 
