@@ -2411,44 +2411,59 @@ function handle_non_immutable_dirs {
 
 
 
-function kill_other_sessions {
-    print_banner "Killing Other Interactive Sessions"
-
-    # Who launched the script?  (sudo keeps the original in $SUDO_USER)
-    local me_user="${SUDO_USER:-$USER}"
-
-    # What TTY am I on right now?
-    local me_tty
-    me_tty=$(tty) || me_tty="/dev/unknown"
-    me_tty="${me_tty#/dev/}"        # strip leading /dev/
-
-    echo "[*] Running as user : $me_user"
-    echo "[*] Current TTY     : $me_tty"
-
-    # Walk through every login listed by `who`
-    local killed=0
-    while read -r user tty _; do
-        # blank tty?  skip
-        [[ -z "$tty" ]] && continue
-        # strip /dev/
-        tty="${tty#/dev/}"
-
-        # Skip the terminal we’re sitting in
-        if [[ "$user" == "$me_user" && "$tty" == "$me_tty" ]]; then
-            continue
-        fi
-
-        echo "    -> Killing processes for $user on $tty"
-        # only that user on that tty
-        pkill -KILL -u "$user" -t "$tty"
-        killed=1
-    done < <(who)
-
-    if (( killed == 0 )); then
-        echo "[*] No other interactive sessions found."
-    else
-        echo "[*] All other sessions terminated."
+function kill_other_sessions() {
+    # Get the current session's TTY
+    local current_tty=$(tty 2>/dev/null)
+    if [[ -z "$current_tty" ]]; then
+        echo "Error: Could not determine current TTY" >&2
+        return 1
     fi
+
+    # Get the current user
+    local current_user=$(whoami)
+    if [[ -z "$current_user" ]]; then
+        echo "Error: Could not determine current user" >&2
+        return 1
+    }
+
+    # Check if who command is available
+    if ! command -v who >/dev/null 2>&1; then
+        echo "Error: 'who' command not found" >&2
+        return 1
+    }
+
+    # Get all sessions for the current user, excluding the current TTY
+    # Using who command to list all login sessions
+    while IFS= read -r line; do
+        # Parse who output (format: user tty time host)
+        read -r user tty _ <<< "$line"
+        
+        # Skip if not current user or current TTY
+        [[ "$user" != "$current_user" ]] && continue
+        [[ "$tty" == "${current_tty#/dev/}" ]] && continue
+
+        # Find PIDs associated with this TTY
+        # Using ps to get processes for the specific TTY
+        while IFS= read -r pid; do
+            # Skip empty PIDs
+            [[ -z "$pid" ]] && continue
+            
+            # Verify the process exists
+            if kill -0 "$pid" 2>/dev/null; then
+                echo "Terminating session on /dev/$tty (PID: $pid)"
+                # Send TERM signal first
+                kill -TERM "$pid" 2>/dev/null
+                # Wait briefly and send KILL if still running
+                sleep 0.1
+                if kill -0 "$pid" 2>/dev/null; then
+                    kill -KILL "$pid" 2>/dev/null
+                fi
+            fi
+        done < <(ps -t "$tty" -o pid= 2>/dev/null)
+    done < <(who 2>/dev/null)
+
+    echo "All other sessions for $current_user have been terminated"
+    return 0
 }
 
 
