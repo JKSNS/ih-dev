@@ -3250,9 +3250,9 @@ function show_web_hardening_menu {
             secure_php_ini
             configure_apache_htaccess
             my_secure_sql_installation
-            manage_web_immutability_menu
             disable_phpmyadmin
             configure_modsecurity
+            manage_web_immutability_menu
             ;;
         2)
             print_banner "Installing Manual ModSecurity"
