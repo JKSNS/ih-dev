@@ -2412,44 +2412,50 @@ function handle_non_immutable_dirs {
 
 
 function kill_other_sessions {
-    print_banner "Killing Non‑Active Sessions"
+    print_banner "Killing Other Login Sessions"
 
-    # 1) Who actually ran this script?
-    if [ -n "$SUDO_USER" ]; then
-        target_user="$SUDO_USER"
-    else
-        target_user="$USER"
-    fi
+    # 1) Figure out who really invoked us
+    #    (when you run `sudo ./script`, USER becomes root, but SUDO_USER stays you)
+    local invoker="${SUDO_USER:-$USER}"
 
-    # 2) Which TTY am I on?
-    current_tty=$(tty)
-    # strip the leading "/dev/"
-    current_tty="${current_tty#/dev/}"
+    # 2) What TTY am I on right now?
+    #    We use /proc/self/fd/0 in case `tty` ever returns "not a tty"
+    local curr_tty
+    curr_tty=$(readlink /proc/$$/fd/0 2>/dev/null || tty)
+    curr_tty="${curr_tty#/dev/}"    # strip leading "/dev/"
 
-    echo "[*] Invoking user: $target_user"
-    echo "[*] Current TTY:     $current_tty"
+    echo "[*] Script invoked by: $invoker"
+    echo "[*] Current TTY:      $curr_tty"
 
-    # 3) Collect all of that user’s TTYs except the current one
-    mapfile -t other_ttys < <(
-        who | awk -v u="$target_user" -v ct="$current_tty" '
-            $1==u && $2!=ct { print $2 }
-        ' | sort -u
+    # 3) Gather ALL of that user’s login TTYs from `who`
+    mapfile -t all_ttys < <(
+      who | awk -v u="$invoker" '$1==u { print $2 }' | sort -u
     )
 
+    # 4) Filter out the one we’re on
+    other_ttys=()
+    for t in "${all_ttys[@]}"; do
+      if [[ "$t" != "$curr_tty" ]]; then
+        other_ttys+=("$t")
+      fi
+    done
+
+    # 5) If there’s nothing else, bail out
     if [ ${#other_ttys[@]} -eq 0 ]; then
-        echo "[*] No other sessions found for $target_user."
-        return 0
+      echo "[*] No other sessions to kill."
+      return 0
     fi
 
-    echo "[*] Will kill $target_user’s sessions on: ${other_ttys[*]}"
-    for tty in "${other_ttys[@]}"; do
-        echo "[*] Killing processes for $target_user on TTY $tty"
-        # Only kills processes belonging to that user on that tty
-        pkill -KILL -u "$target_user" -t "$tty"
+    echo "[*] Killing $invoker’s sessions on: ${other_ttys[*]}"
+    for t in "${other_ttys[@]}"; do
+      echo "    -> Killing processes on TTY $t"
+      # only kills processes belonging to $invoker on that TTY
+      pkill -KILL -u "$invoker" -t "$t"
     done
 
     echo "[*] Done."
 }
+
 
 
 function defend_against_forkbomb {
