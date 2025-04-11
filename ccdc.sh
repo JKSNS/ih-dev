@@ -1484,6 +1484,10 @@ function setup_splunk {
 
 ##################### ADDITIONAL WEB HARDENING FUNCTIONS #####################
 function backup_databases {
+    if [ "$ANSIBLE" == "true" ]; then
+        echo "[*] Ansible mode: Skipping database backup."
+        return 0
+    fi
     print_banner "Hardening Databases"
     sudo service mysql status >/dev/null 2>&1
     if [ $? -eq 0 ]; then
@@ -1505,6 +1509,7 @@ function backup_databases {
         echo "[+] PostgreSQL is active!"
     fi
 }
+
 
 #function secure_php_ini {
 #    print_banner "Securing php.ini Files"
